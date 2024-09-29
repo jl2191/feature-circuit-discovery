@@ -1,0 +1,46 @@
+[tool.poetry]
+name = "feature-circuit-discovery"
+version = "0.1.0"
+description = ""
+authors = ["Your Name <you@example.com>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+sae-lens = "^3.22.2"
+
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.8.0"
+flake8 = "^7.1.1"
+isort = "^5.13.2"
+pre-commit = "^3.8.0"
+ruff = "^0.6.8"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+# pyflakes, pycodestyle, isort
+lint.select = ["F", "E", "W", "I001"]
+# ignoring module-import-not-at-top-of-file (E402) to allow for os.environ modifications
+# between import statement and F722 and for jaxtyping
+lint.ignore = [
+    "E402",
+    "F722",
+    "F821", # Forward annotation false positive from jaxtyping. Should be caught by pyright
+]
+
+[tool.pyright]
+# reportMissingParameterType = true
+# reportUnknownParameterType = true
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = [
+    "--jaxtyping-packages=auto_embeds,beartype.beartype",
+]
