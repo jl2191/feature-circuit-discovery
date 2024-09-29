@@ -3,7 +3,7 @@
 # with open("ioi_test_100.json", "rb") as file:
 #     prompt_data = json.load(file)
 
-# nputs = tokenizer(
+# inputs = tokenizer(
 #     prompt_data, return_tensors="pt", add_special_tokens=True, padding=True
 # ).data["input_ids"].to(device)
 # matrices = []
