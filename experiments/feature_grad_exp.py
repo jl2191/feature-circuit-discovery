@@ -1,4 +1,6 @@
 # %%
+import json
+
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -16,6 +18,8 @@ model = AutoModelForCausalLM.from_pretrained(
 device = model.device
 
 tokenizer = AutoTokenizer.from_pretrained("google/gemma-2-2b")
+
+
 # %%
 prompt_data = [
     "what's your favourite color?",
@@ -23,15 +27,46 @@ prompt_data = [
     "why don't you like me?",
 ]
 
-inputs = tokenizer.encode(
-    prompt_data[0], return_tensors="pt", add_special_tokens=True
-).to(device)
+# %%
+with open(
+    "/root/feature-circuit-discovery/datasets/ioi/ioi_test_100.json", "rb"
+) as file:
+    prompt_data = json.load(file)
+
+prompt_data["prompts"] = [
+    " ".join(sentence.split()[:-1]) for sentence in prompt_data["sentences"]
+]
+
+# %%
+with open(
+    "/root/feature-circuit-discovery/datasets/ioi/ioi_test_100_2.json", "w"
+) as file:
+    json.dump(prompt_data, file)
+
+
+# %%
+tokenized_prompts = (
+    tokenizer(
+        prompt_data["prompts"][:15],
+        return_tensors="pt",
+        add_special_tokens=True,
+        padding=True,
+    )
+    .data["input_ids"]
+    .to(device)
+)
 
 matrices = []
-activated_features = get_active_features(prompt_data, tokenizer, model, device)
+
+activated_features = get_active_features(tokenized_prompts, model, device, threshold=1)
+
+for i in range(len(activated_features)):
+    print(len(activated_features[i]))
+
+# %%
 for layer in tqdm(range(len(activated_features) - 1)):
     grad_matrix = compute_gradient_matrix(
-        inputs,
+        tokenized_prompts,
         layer,
         layer + 1,
         activated_features[layer],

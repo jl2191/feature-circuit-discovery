@@ -71,26 +71,22 @@ def gather_residual_activations(model, target_layer, inputs):
     return activations["output"]
 
 
-def get_active_features(prompts, tokenizer, model, device, threshold=0.9):
-    # change this to tokenizer().[whatever attrivutes of the return object we need]
-    tokenized_prompts = (
-        tokenizer(prompts, return_tensors="pt", add_special_tokens=True, padding=True)
-        .data["input_ids"]
-        .to(device)
-    )
+def get_active_features(tokenized_prompts, model, device, threshold=0.9):
     feature_acts = []
 
     for layer in tqdm(range(model.config.num_hidden_layers)):
         sae = load_sae(canonical_sae_filenames[layer], device)
         activations = gather_residual_activations(model, layer, tokenized_prompts)
         sae_activations = sae.encode(activations)
+        # batch, seq, d_sae
         feature_acts.append(sae_activations)
 
     # channge this to finding the features that activate in most/all of the forward
     # passes in rather than looking at all of the activated ones
 
     # find all the activated features in all the layers
-    activated_features = find_frequent_nonzero_indices(feature_acts, threshold=0.9)
+    print(feature_acts[0].shape)
+    activated_features = find_frequent_nonzero_indices(feature_acts, threshold)
 
     return activated_features
 
