@@ -17,6 +17,7 @@ model = AutoModelForCausalLM.from_pretrained(
 
 device = model.device
 
+
 tokenizer = AutoTokenizer.from_pretrained("google/gemma-2-2b")
 
 
@@ -58,7 +59,7 @@ tokenized_prompts = (
 
 matrices = []
 
-activated_features = get_active_features(tokenized_prompts, model, device, threshold=1)
+activated_features = get_active_features(tokenized_prompts, model, device, threshold=0.5)
 
 for i in range(len(activated_features)):
     print()

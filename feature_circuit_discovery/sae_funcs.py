@@ -108,6 +108,15 @@ def get_active_features(tokenized_prompts, model, device, threshold=0.9):
 
     return activated_features
 
+def get_active_features_in_layer(tokenized_prompts, model, layer, threshold=0.9):
+    device = model.device
+    sae = load_sae(canonical_sae_filenames[layer], device)
+    activations = gather_residual_activations(model, layer, tokenized_prompts)
+    sae_activations = sae.encode(activations)
+    activated_features = find_frequent_nonzero_indices([sae_activations], threshold)
+    return activated_features[0]
+
+
 
 def describe_feature(layer, idx):
     """
@@ -239,3 +248,59 @@ def compute_gradient_matrix(
     if verbose:
         print("done")
     return gradient_matrix
+
+
+
+def model_with_added_feature_vector(model, inputs, sae, layer_l, feature_idx, scalar, layer_d):
+    """
+    Modifies the model's forward pass by adding a scaled feature vector to the residual stream at a specified layer.
+
+    Args:
+        model: The transformer model.
+        inputs: The inputs to the model (can be a batch).
+        sae: The Sparse Autoencoder (SAE) object.
+        layer_l: The layer at which to add the feature vector.
+        feature_idx: The index of the feature in the SAE.
+        scalar: The scalar to scale the feature vector before adding.
+        layer_d: The downstream layer from which to extract residual activations.
+
+    Returns:
+        logits: The output logits from the forward pass.
+        downstream_act: The residual stream activations at layer_d.
+    """
+    # Ensure the feature vector is on the correct device and detached
+    feature_vector = sae.W_dec[feature_idx, :].to(inputs.device).detach()  # Shape: (d_model,)
+    feature_vector = feature_vector.unsqueeze(0).unsqueeze(0)  # Shape: (1, 1, d_model)
+    
+    # Define hooks
+    downstream_act = {}
+
+    def add_feature_vector_hook(module, module_input, module_output):
+        # Add the scaled feature vector in-place to save memory
+        module_output[0].add_(scalar * feature_vector)
+        return module_output
+
+    def gather_downstream_act_hook(module, module_input, module_output):
+        # Detach the activations to prevent graph retention
+        downstream_act['act'] = module_output[0].detach()
+        return module_output
+
+    # Register hooks
+    handle_add = model.model.layers[layer_l].register_forward_hook(add_feature_vector_hook)
+    handle_gather = model.model.layers[layer_d].register_forward_hook(gather_downstream_act_hook)
+
+    # Run the forward pass within no_grad to disable gradient tracking
+    with torch.no_grad():
+        outputs = model(inputs)
+
+    # Remove hooks immediately after the forward pass
+    handle_add.remove()
+    handle_gather.remove()
+
+    # Detach logits to free memory
+    logits = outputs.logits.detach()
+
+    # Retrieve the downstream activations
+    downstream_act = downstream_act.get('act', None)
+
+    return logits, downstream_act
