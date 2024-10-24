@@ -61,7 +61,9 @@ matrices = []
 activated_features = get_active_features(tokenized_prompts, model, device, threshold=1)
 
 for i in range(len(activated_features)):
-    print(len(activated_features[i]))
+    print()
+    print(activated_features[i])
+    print("length:",len(activated_features[i]))
 
 # %%
 for layer in tqdm(range(len(activated_features) - 1)):
@@ -80,4 +82,6 @@ for layer in tqdm(range(len(activated_features) - 1)):
 from feature_circuit_discovery.graphs import draw_bipartite_graph
 
 for i in matrices:
-    draw_bipartite_graph(i, threshold=3)
+    draw_bipartite_graph(i, threshold=0)
+
+# %%

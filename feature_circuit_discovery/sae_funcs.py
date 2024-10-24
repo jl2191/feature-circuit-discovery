@@ -62,14 +62,32 @@ def gather_residual_activations(model, target_layer, inputs):
     activations = {}
 
     def hook_fn(module, input, output):
-        activations["output"] = output[0]
+        # Handle the case where output is a tuple
+        if isinstance(output, tuple):
+            # Typically, the first element is the tensor we need
+            output_tensor = output[0]
+        else:
+            output_tensor = output
 
+        # Ensure the output_tensor has at least 2 dimensions
+        if output_tensor.dim() < 2:
+            raise ValueError(f"Expected output tensor to have at least 2 dimensions, got {output_tensor.dim()}.")
+
+        # Select the last token in the sequence
+        last_token_activation = output_tensor[:, -1, :]  # Shape: (batch_size, hidden_size)
+        activations["output"] = last_token_activation
+
+    # Register the forward hook on the target layer
     handle = model.model.layers[target_layer].register_forward_hook(hook_fn)
-    model(inputs)
-    handle.remove()
+    
+    try:
+        # Forward pass to trigger the hook
+        model(inputs)
+    finally:
+        # Ensure the hook is removed even if an error occurs
+        handle.remove()
 
     return activations["output"]
-
 
 def get_active_features(tokenized_prompts, model, device, threshold=0.9):
     feature_acts = []
