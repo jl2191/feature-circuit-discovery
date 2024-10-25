@@ -9,7 +9,7 @@ To set up your environment and start experimenting with FeatureCircuitDiscovery,
 - Navigate to the cloned repository directory and run `poetry install --with dev` to install all necessary dependencies.
 
 ``` bash
-curl -sSL https://install.python-poetry.org | python3 -
+curl -sSL https://install.python-poetry.org | python3 - && export PATH="/root/.local/bin:$PATH"
 
 git clone https://github.com/jl2191/feature-circuit-discovery.git
 
