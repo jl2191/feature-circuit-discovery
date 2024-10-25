@@ -1,4 +1,4 @@
-# %%
+# %%    
 import json
 
 from tqdm import tqdm
@@ -41,10 +41,10 @@ tokenized_prompts = (
     .to(device)
 )
 
-upstream_layer = 18
-downstream_layer = 20
-upstream_features = get_active_features_in_layer(tokenized_prompts, model, 18)
-downstream_features = get_active_features_in_layer(tokenized_prompts, model, 20)
+upstream_layer = 2
+downstream_layer = 4
+upstream_features = get_active_features_in_layer(tokenized_prompts, model, upstream_layer)
+downstream_features = get_active_features_in_layer(tokenized_prompts, model, downstream_layer)
 
 grad_matrix = compute_gradient_matrix(
     tokenized_prompts,
@@ -64,6 +64,7 @@ print(downstream_features)
 upstream_sae = load_sae(canonical_sae_filenames[upstream_layer], device)
 downstream_sae = load_sae(canonical_sae_filenames[downstream_layer], device)
 scalars = [-1+i*0.1 for i in range(21)]
+#scalars = [0.0 for i in range(21)]
 modified_feature_acts = []
 for feature_idx in tqdm(upstream_features):
     row = []
@@ -81,38 +82,72 @@ print("number of samples:", len(tokenized_prompts))
 print("number of scalars:", len(scalars))
 
 # %%
+mat = []
+for i in modified_feature_acts:
+    stacked = torch.stack(i)
+    r = torch.mean(torch.diff(torch.mean(stacked, dim = 1).detach().cpu(), dim = 0), dim = 0)
+    mat.append(r)
+plt.imshow(mat)
+plt.colorbar()
+plt.show()
+
+# %%
+stacked = torch.stack(modified_feature_acts[0])
+print(stacked.shape)
+p = torch.mean(stacked, dim = 1).detach().cpu().T
+print(p.shape)
+diffs = torch.diff(p[0])
+#plt.plot(p[0])
+plt.plot(diffs)
+plt.show()
+# %%
+assert False
+
+"""
 stacked_scalars = [torch.stack(scalar_list, dim=0) for scalar_list in modified_feature_acts]
 
-# Step 2: Stack all upstream features
-# This will convert the list of 17 tensors (each of shape [21, 10, 15]) into a single tensor of shape [17, 21, 10, 15]
-modified_feature_acts = torch.stack(stacked_scalars, dim=0).reshape(17,15, 21, 10)
+modified_feature_acts = torch.stack(stacked_scalars, dim=0).reshape(len(upstream_features),len(downstream_features), 21, 10)
+
+
+from einops import rearrange
+
+# Stack and reshape with einops"""
 
 # %%
-print(modified_feature_acts.shape)
-# %%
-modified_feature_acts =modified_feature_acts.reshape(17,15, 21, 10)
-# %%
 
+result_matrix = torch.empty((len(upstream_features), len(downstream_features)))
 
-result_matrix = torch.empty((17, 15))
-
-for i in range(17):
-    for j in range(15):
+for i in range(len(upstream_features)):
+    for j in range(len(downstream_features)):
         # Extract the 2D tensor corresponding to the current i, j
         current_tensor = modified_feature_acts[i, j]
-        
+
+
         # Apply the operation
-        avg_gradient = torch.mean(torch.diff(torch.mean(current_tensor, dim=0)) / 0.1)
+        avg_gradient = torch.mean(torch.diff(torch.mean(current_tensor, dim=1)) / 0.1)
         
         # Store the result
         result_matrix[i, j] = avg_gradient
 
 
 plt.imshow(result_matrix.detach().numpy())
+plt.colorbar()
 plt.show()
 # %%
 plt.imshow(grad_matrix.cpu())
+plt.colorbar()
+plt.show()
+
+# %%
+current_tensor = torch.mean(modified_feature_acts[2, 3], dim=0)
+plt.plot(current_tensor.detach().cpu().numpy())
+
 plt.show()
 # %%
-print(grad_matrix)
+plt.imshow([torch.mean(torch.diff(torch.mean(torch.stack(row), dim = 1).detach().cpu(), dim = 0), dim = 0)]) 
+
+# %%
+print(torch.diff(torch.mean(torch.stack(row), dim = 1), dim = 0))
+# %%
+print(torch.mean(torch.stack(row), dim = 1).shape)
 # %%
