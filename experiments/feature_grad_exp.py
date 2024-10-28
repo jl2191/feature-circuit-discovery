@@ -33,7 +33,7 @@ prompt_data = [
 
 # %%
 with open(
-    "/root/feature-circuit-discovery/datasets/ioi/ioi_test_100.json", "rb"
+    "/tmp/feature-circuit-discovery/datasets/ioi/ioi_test_100.json", "rb"
 ) as file:
     prompt_data = json.load(file)
 
@@ -58,6 +58,8 @@ for i in range(len(activated_features)):
     print()
     print(activated_features[i])
     print("length:", len(activated_features[i]))
+
+print(activated_features)
 
 # %%
 """
@@ -86,7 +88,9 @@ for i in matrices:
     plt.imshow(i.cpu())
     plt.colorbar()
     plt.show()
+"""    
 # %%
+"""
 for i in matrices:
     print(i)"""
 
@@ -152,7 +156,7 @@ def plot_layer_connections(
         # Iterate through the tensor to find non-zero connections
         for start_node_idx in range(num_nodes_per_layer[i]):
             for end_node_idx in range(num_nodes_per_layer[j]):
-                if tensor.T[start_node_idx, end_node_idx] != 0.0:
+                if abs(tensor.T[start_node_idx, end_node_idx]) >0.5:
                     start_pos = node_positions.get((i, start_node_idx))
                     end_pos = node_positions.get((j, end_node_idx))
                     if start_pos and end_pos:
@@ -178,7 +182,8 @@ def plot_layer_connections(
     plt.show()
 
 
-num_nodes = [len(i) for i in activated_features]
+
+num_nodes = [len(i) for i in activated_features.values()]
 
 plot_layer_connections(connections, num_nodes)
 # %%

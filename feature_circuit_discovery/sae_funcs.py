@@ -470,7 +470,7 @@ def compute_gradient_matrix(
     if verbose:
         print("getting upstram feature vectors")
     for k in upstream_features:
-        feature_vector = sae_upstream.W_dec[k, :]
+        feature_vector = sae_upstream.W_dec[k, :].clone().detach().requires_grad_(True)
         feature_vectors.append(feature_vector)
 
     feature_vectors = torch.stack(feature_vectors)
@@ -478,6 +478,7 @@ def compute_gradient_matrix(
     def modify_residual_activations(module, input, output):
         residual = output[0] if isinstance(output, tuple) else output
         residual_modified = residual.clone()
+        
 
         weighted_feature_vectors = (
             a.view(m, 1, 1) * feature_vectors.view(m, 1, d_model)
@@ -486,10 +487,10 @@ def compute_gradient_matrix(
             residual_modified.size(0), -1, -1
         )
 
-        residual_modified[:, 0:1, :] += expanded_weighted_feature_vector
+        residual_modified[:, :, :] += expanded_weighted_feature_vector
 
         return (
-            (residual_modified,) + output[1:]
+            (residual_modified,) + output
             if isinstance(output, tuple)
             else residual_modified
         )
@@ -510,28 +511,23 @@ def compute_gradient_matrix(
     sae_downstream_acts = sae_downstream.encode(act_downstream)
 
     batch_idx = 0
-    seq_idx = 0
+    seq_idx = -1  # Last token
+    features_downstream = sae_downstream_acts[:, seq_idx, downstream_features]  # Shape: (batch_size, n)
 
-    features_downstream = sae_downstream_acts[batch_idx, seq_idx, downstream_features]
+    gradient_matrix = torch.zeros(n, m, device=device)  # Shape: (n, m)
 
-    gradient_matrix = torch.zeros(n, m, device=device)
-
-    # Compute gradients for each feature in the downstream layer with respect to 'a'
     if verbose:
-        print("computing gradients")
-        for i in tqdm(range(n)):
-            if a.grad is not None:
-                a.grad.zero_()
-            features_downstream[i].backward(retain_graph=True)
-            gradient_matrix[i, :] = a.grad.detach()
+        print("computing gradients for all batch elements at the last token")
+
+    # Compute gradients for each downstream feature across all batch elements
+    for i in range(n):
+        if a.grad is not None:
             a.grad.zero_()
-    else:
-        for i in range(n):
-            if a.grad is not None:
-                a.grad.zero_()
-            features_downstream[i].backward(retain_graph=True)
-            gradient_matrix[i, :] = a.grad.detach()
-            a.grad.zero_()
+        # Sum over the batch dimension to get a scalar output
+        scalar_output = features_downstream[:, i].sum()
+        scalar_output.backward(retain_graph=True)
+        gradient_matrix[i, :] = a.grad.detach()
+
     if verbose:
         print("clean up")
     # Clean up

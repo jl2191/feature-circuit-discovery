@@ -19,7 +19,7 @@ tokenizer = AutoTokenizer.from_pretrained("google/gemma-2-2b")
 
 # %%
 with open(
-    "/root/feature-circuit-discovery/datasets/ioi/ioi_test_100.json", "rb"
+    "/tmp/feature-circuit-discovery/datasets/ioi/ioi_test_100.json", "rb"
 ) as file:
     prompt_data = json.load(file)
 
@@ -58,12 +58,14 @@ grad_matrix = compute_gradient_matrix(
 
 
 # %%
-print(downstream_features)
+plt.imshow(grad_matrix.cpu().T)
+plt.colorbar()
+plt.show()
 # %%
 #Here we attempt to validate or prediction by seeing what kind of impact the ablation/reinforcement of certain feature activations may have.
 upstream_sae = load_sae(canonical_sae_filenames[upstream_layer], device)
 downstream_sae = load_sae(canonical_sae_filenames[downstream_layer], device)
-scalars = [-1+i*0.1 for i in range(21)]
+scalars = [-10+i for i in range(21)]
 #scalars = [0.0 for i in range(21)]
 modified_feature_acts = []
 for feature_idx in tqdm(upstream_features):
@@ -84,9 +86,11 @@ print("number of scalars:", len(scalars))
 # %%
 mat = []
 for i in modified_feature_acts:
-    stacked = torch.stack(i)
-    r = torch.mean(torch.diff(torch.mean(stacked, dim = 1).detach().cpu(), dim = 0), dim = 0)
-    mat.append(r)
+    stacked = torch.stack(i) #shape: scalars, batch, ds_features
+    batch_mean = torch.mean(stacked, dim = 1).detach().cpu()
+    differences = torch.diff(batch_mean, dim = 0)
+    meaned_differences = torch.mean(differences, dim = 0)
+    mat.append(meaned_differences)
 plt.imshow(mat)
 plt.colorbar()
 plt.show()
@@ -94,60 +98,35 @@ plt.show()
 # %%
 stacked = torch.stack(modified_feature_acts[0])
 print(stacked.shape)
-p = torch.mean(stacked, dim = 1).detach().cpu().T
+p = torch.mean(stacked, dim = 1).detach().cpu()
 print(p.shape)
-diffs = torch.diff(p[0])
+diffs = torch.diff(p[:10])
 #plt.plot(p[0])
-plt.plot(diffs)
-plt.show()
-# %%
-assert False
-
-"""
-stacked_scalars = [torch.stack(scalar_list, dim=0) for scalar_list in modified_feature_acts]
-
-modified_feature_acts = torch.stack(stacked_scalars, dim=0).reshape(len(upstream_features),len(downstream_features), 21, 10)
-
-
-from einops import rearrange
-
-# Stack and reshape with einops"""
-
-# %%
-
-result_matrix = torch.empty((len(upstream_features), len(downstream_features)))
-
-for i in range(len(upstream_features)):
-    for j in range(len(downstream_features)):
-        # Extract the 2D tensor corresponding to the current i, j
-        current_tensor = modified_feature_acts[i, j]
-
-
-        # Apply the operation
-        avg_gradient = torch.mean(torch.diff(torch.mean(current_tensor, dim=1)) / 0.1)
-        
-        # Store the result
-        result_matrix[i, j] = avg_gradient
-
-
-plt.imshow(result_matrix.detach().numpy())
-plt.colorbar()
-plt.show()
-# %%
-plt.imshow(grad_matrix.cpu())
-plt.colorbar()
+plt.plot(p[10:])
+plt.yscale("log")
 plt.show()
 
 # %%
-current_tensor = torch.mean(modified_feature_acts[2, 3], dim=0)
-plt.plot(current_tensor.detach().cpu().numpy())
+#here i'm trying to see whether there is something wrong with the augmented forwardpass method by extracting the activations at which they are supposed to be augmented to see whether they change in the way i expect them to.
+def validate_feature_modifcation_forwardpass(upstream_feature):
+    """
+    checks whether the addition of a feature vector to a residual stream actuall has the intended effect of strengthening the activation of the respective feature by comparing feature activations from before and after the addition of the feature vector.
+    """
+    _ , unaugmented_acts = model_with_added_feature_vector(model, tokenized_prompts, upstream_sae, upstream_layer, upstream_feature, 0, upstream_layer)
+    unaugmented_feature_acts = upstream_sae.encode(unaugmented_acts)[:, -1, upstream_features]
+    _ , augmented_acts = model_with_added_feature_vector(model, tokenized_prompts, upstream_sae, upstream_layer, upstream_feature, 1, upstream_layer)
+    augmented_feature_acts = upstream_sae.encode(augmented_acts)[:, -1, upstream_features]
 
-plt.show()
-# %%
-plt.imshow([torch.mean(torch.diff(torch.mean(torch.stack(row), dim = 1).detach().cpu(), dim = 0), dim = 0)]) 
+    diffs = unaugmented_feature_acts - augmented_feature_acts
+    print(diffs.shape)
+    plt.imshow(diffs.detach().cpu())
+    plt.show()
+for i in upstream_features:
+    validate_feature_modifcation_forwardpass(i)
+# %%$
+#checking whether zero a scalar actually produced the same result as the neutral method.
 
-# %%
-print(torch.diff(torch.mean(torch.stack(row), dim = 1), dim = 0))
-# %%
-print(torch.mean(torch.stack(row), dim = 1).shape)
+neutral_logits = model(tokenized_prompts).logits.detach()
+zero_scalar_logits, _ = model_with_added_feature_vector(model, tokenized_prompts, upstream_sae, upstream_layer, upstream_features[0], 0, upstream_layer)
+print("the difference between the two logits should be zero.\nLogit difference:",float(torch.sum(torch.abs(neutral_logits-zero_scalar_logits))))
 # %%
