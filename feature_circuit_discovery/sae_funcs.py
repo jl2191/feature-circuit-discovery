@@ -416,6 +416,8 @@ def compute_gradient_matrix(
     downstream_features,
     model,
     verbose=False,
+    sae_upstream = None,
+    sae_downstream = None,
 ):
     """
     Computes the gradient matrix between upstream and downstream features in a model.
@@ -445,16 +447,17 @@ def compute_gradient_matrix(
     torch.cuda.empty_cache()
     gc.collect()
     torch.set_grad_enabled(True)
+    if sae_upstream == None:
+        if verbose:
+            print()
+            print(f"loading upstream sae (Layer {upstream_layer_idx})")
+        sae_upstream = load_sae(canonical_sae_filenames[upstream_layer_idx], device)
 
-    if verbose:
-        print()
-        print(f"loading upstream sae (Layer {upstream_layer_idx})")
-    sae_upstream = load_sae(canonical_sae_filenames[upstream_layer_idx], device)
-
-    if verbose:
-        print("upsteam sae loaded")
-        print(f"loading downstram sae (Layer {downstream_layer_idx})")
-    sae_downstream = load_sae(canonical_sae_filenames[downstream_layer_idx], device)
+    if sae_downstream == None:
+        if verbose:
+            print("upsteam sae loaded")
+            print(f"loading downstram sae (Layer {downstream_layer_idx})")
+        sae_downstream = load_sae(canonical_sae_filenames[downstream_layer_idx], device)
 
     if verbose:
         print("downsteam sae loaded")
@@ -505,12 +508,12 @@ def compute_gradient_matrix(
     hook.remove()
 
     hidden_states = outputs.hidden_states
-    act_upstream = hidden_states[upstream_layer_idx]
+    
     act_downstream = hidden_states[downstream_layer_idx]
 
     sae_downstream_acts = sae_downstream.encode(act_downstream)
 
-    batch_idx = 0
+
     seq_idx = -1  # Last token
     features_downstream = sae_downstream_acts[:, seq_idx, downstream_features]  # Shape: (batch_size, n)
 
@@ -527,6 +530,8 @@ def compute_gradient_matrix(
         scalar_output = features_downstream[:, i].sum()
         scalar_output.backward(retain_graph=True)
         gradient_matrix[i, :] = a.grad.detach()
+        
+
 
     if verbose:
         print("clean up")

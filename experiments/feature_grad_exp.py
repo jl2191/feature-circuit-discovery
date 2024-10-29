@@ -7,11 +7,13 @@ import torch
 from tqdm import tqdm
 from matplotlib.widgets import Slider
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from feature_circuit_discovery.data import canonical_sae_filenames
 
 from feature_circuit_discovery.sae_funcs import (
     compute_gradient_matrix,
     get_active_features,
-    describe_features
+    describe_features,
+    load_sae
 )
 
 # %%
@@ -38,12 +40,18 @@ with open(
     "/tmp/feature-circuit-discovery/datasets/ioi/ioi_test_100.json", "rb"
 ) as file:
     prompt_data = json.load(file)
+# %%
+import random
+#addition data
+addition_prompts = []
+for i in range(15):
+    addition_prompts.append(f"{random.randint(0, 100)} + {random.randint(0, 100)} = ")
 
-
+print(addition_prompts)
 # %%
 tokenized_prompts = (
     tokenizer(
-        prompt_data["prompts"][:15],
+        addition_prompts,#prompt_data["prompts"][15:30],
         return_tensors="pt",
         add_special_tokens=True,
         padding=True,
@@ -54,7 +62,7 @@ tokenized_prompts = (
 
 matrices = []
 
-activated_features = get_active_features(tokenized_prompts, model, device, threshold=1, activation_threshold = 1)
+activated_features = get_active_features(tokenized_prompts, model, device, threshold=1, activation_threshold = 0)
 
 for i in range(len(activated_features)):
     print()
@@ -97,10 +105,153 @@ for i in matrices:
     print(i)"""
 
 # %%
+import gc
+def compute_gradient_matrix(
+    inputs,
+    upstream_layer_idx,
+    downstream_layer_idx,
+    upstream_features,
+    downstream_features,
+    model,
+    verbose=False,
+    sae_upstream = None,
+    sae_downstream = None,
+):
+    """
+    Computes the gradient matrix between upstream and downstream features in a model.
+
+    Args:
+        inputs: The tokenized input prompts.
+        upstream_layer_idx: The index of the upstream layer.
+        downstream_layer_idx: The index of the downstream layer.
+        upstream_features: The list of active features in the upstream layer.
+        downstream_features: The list of active features in the downstream layer.
+        model: The model from which to gather activations.
+        verbose: Whether to print verbose output. Defaults to False.
+
+    Returns:
+        A gradient matrix of shape (n, m) where n is the number of downstream features
+        and m is the number of upstream features.
+    """
+    device = model.device
+
+    if model is None:
+        raise ValueError("model must be provided")
+
+    if device is None:
+        device = next(model.parameters()).device
+
+    # Clear GPU cache and enable gradient computation
+    torch.cuda.empty_cache()
+    gc.collect()
+    torch.set_grad_enabled(True)
+    if sae_upstream == None:
+        if verbose:
+            print()
+            print(f"loading upstream sae (Layer {upstream_layer_idx})")
+        sae_upstream = load_sae(canonical_sae_filenames[upstream_layer_idx], device)
+
+    if sae_downstream == None:
+        if verbose:
+            print("upsteam sae loaded")
+            print(f"loading downstram sae (Layer {downstream_layer_idx})")
+        sae_downstream = load_sae(canonical_sae_filenames[downstream_layer_idx], device)
+
+    if verbose:
+        print("downsteam sae loaded")
+    m = len(upstream_features)
+    n = len(downstream_features)
+
+    d_model = sae_upstream.W_dec.size(1)
+
+    # Define the scalar parameters 'a' as a tensor with requires_grad=True
+    a = torch.zeros(m, requires_grad=True, device=device)  # Shape: (m,)
+
+    feature_vectors = []
+    if verbose:
+        print("getting upstram feature vectors")
+    for k in upstream_features:
+        feature_vector = sae_upstream.W_dec[k, :].clone().detach().requires_grad_(True)
+        feature_vectors.append(feature_vector)
+
+    feature_vectors = torch.stack(feature_vectors)
+
+    def modify_residual_activations(module, input, output):
+        residual = output[0] if isinstance(output, tuple) else output
+        residual_modified = residual.clone()
+        
+
+        weighted_feature_vectors = (
+            a.view(m, 1, 1) * feature_vectors.view(m, 1, d_model)
+        ).sum(dim=0)
+        expanded_weighted_feature_vector = weighted_feature_vectors.expand(
+            residual_modified.size(0), -1, -1
+        )
+
+        residual_modified[:, :, :] += expanded_weighted_feature_vector
+
+        return (
+            (residual_modified,) + output
+            if isinstance(output, tuple)
+            else residual_modified
+        )
+
+    if verbose:
+        print("conducting forward pass")
+    hook = model.model.layers[upstream_layer_idx].register_forward_hook(
+        modify_residual_activations
+    )
+    outputs = model(inputs, output_hidden_states=True)
+
+    hook.remove()
+
+    hidden_states = outputs.hidden_states
+    
+    act_downstream = hidden_states[downstream_layer_idx]
+
+    sae_downstream_acts = sae_downstream.encode(act_downstream)
+
+
+    seq_idx = -1  # Last token
+    features_downstream = sae_downstream_acts[:, seq_idx, downstream_features]  # Shape: (batch_size, n)
+
+    gradient_matrix = torch.zeros(n, m, device=device)  # Shape: (n, m)
+
+    if verbose:
+        print("computing gradients for all batch elements at the last token")
+    """
+    # Compute gradients for each downstream feature across all batch elements
+    for i in range(n):
+        if a.grad is not None:
+            a.grad.zero_()
+        # Sum over the batch dimension to get a scalar output
+        scalar_output = features_downstream[:, i].sum()
+        scalar_output.backward(retain_graph=True)
+        gradient_matrix[i, :] = a.grad.detach()
+    """
+    if a.grad is not None:
+        a.grad.zero_()
+    scalar_outputs = features_downstream.sum(dim=0)  # Shape: (n,)
+    print(scalar_outputs.shape)
+    scalar_outputs.backward(gradient=torch.eye(n, device=device), retain_graph=True)
+    gradient_matrix = a.grad.detach().t()  # Shape: (n, m)
+
+
+    if verbose:
+        print("clean up")
+    # Clean up
+    torch.cuda.empty_cache()
+    gc.collect()
+    if verbose:
+        print("done")
+    return gradient_matrix
+
+
 connections = {}
 num_layers = len(activated_features)
 
 for i in tqdm(range(num_layers)):
+    upstream_sae = load_sae(canonical_sae_filenames[i], device)
     for j in range(i + 1, num_layers):
         # Compute the gradient matrix between layer i and layer j
         grad_matrix = compute_gradient_matrix(
@@ -110,7 +261,8 @@ for i in tqdm(range(num_layers)):
             activated_features[i],
             activated_features[j],
             model,
-            # verbose=True,
+            #verbose=True,
+            sae_upstream=upstream_sae
         )
         # Store the computed matrix in the dictionary
         connections[(i, j)] = grad_matrix
@@ -135,8 +287,7 @@ def plot_layer_connections(
     node_size=50,
     node_color="white",
     connection_color="black",
-    connection_alpha=0.2,
-    top_n=10,  # Number of top nodes to label
+    top_n=30,  # Number of top nodes to label
     describe_features_func=None,  # Function to get descriptions
     text_bg_color="white",  # Background color for text labels
     text_bg_alpha=0.7,  # Transparency for text background
@@ -179,6 +330,9 @@ def plot_layer_connections(
         for idx in range(num_nodes_per_layer[i])
     }
 
+    # Initialize a set to keep track of nodes that have drawn connections
+    drawn_nodes = set()
+
     # Initialize plot
     fig, ax = plt.subplots(figsize=(window_width, window_height))
 
@@ -193,25 +347,29 @@ def plot_layer_connections(
         # Transpose the tensor to align dimensions
         tensor = tensor.T
 
-        # Iterate through the tensor to find non-zero connections
+        # Iterate through the tensor to find connections to draw
         for start_node_idx in range(num_nodes_per_layer[i]):
             for end_node_idx in range(num_nodes_per_layer[j]):
                 weight = tensor[start_node_idx, end_node_idx]
-                importance = abs(weight)
-                node_importance[(i, start_node_idx)] += importance  # Outgoing
-                node_importance[(j, end_node_idx)] += importance    # Incoming
-                if abs(weight) > 10:
+                if abs(weight) > 15:
+                    importance = abs(weight)
+                    node_importance[(i, start_node_idx)] += importance  # Outgoing
+                    node_importance[(j, end_node_idx)] += importance    # Incoming
                     start_pos = node_positions.get((i, start_node_idx))
                     end_pos = node_positions.get((j, end_node_idx))
                     if start_pos and end_pos:
                         x_start, y_start = start_pos
                         x_end, y_end = end_pos
+                        # Ensure m_a is defined; replace with your max importance value
                         ax.plot(
                             [x_start, x_end],
                             [y_start, y_end],
                             color=connection_color,
-                            alpha=connection_alpha,
+                            alpha=float(importance / m_a),
                         )
+                        # Add nodes to the set of drawn nodes
+                        drawn_nodes.add((i, start_node_idx))
+                        drawn_nodes.add((j, end_node_idx))
 
     # Get the top N nodes based on importance
     top_nodes = sorted(
@@ -234,30 +392,30 @@ def plot_layer_connections(
             for feature in features:
                 node_descriptions[(layer_idx, feature['feature_id'])] = feature['description']
 
-
-    # Draw nodes and labels
+    # Draw nodes and labels only for nodes that have drawn connections
     for (i, node_idx), (x, y) in node_positions.items():
-        ax.scatter(x, y, s=node_size, color=node_color, zorder=5, edgecolors="k")
+        if (i, node_idx) in drawn_nodes:
+            ax.scatter(x, y, s=node_size, color=node_color, zorder=5, edgecolors="k")
 
-        # If the node is in top N, add a label
-        if (i, node_idx) in top_nodes_set:
-            description = node_descriptions.get((i, node_idx), "")
-            print(description)
-            ax.text(
-                x,
-                y + node_size * 0.002,  # Slight offset above the node
-                f"{description}",
-                fontsize=8,
-                ha='center',
-                va='bottom',
-                zorder=6,  # Ensure text is on top
-                bbox=dict(
-                    boxstyle="round,pad=0.3",
-                    facecolor=text_bg_color,
-                    edgecolor='none',
-                    alpha=text_bg_alpha,
-                ),
-            )
+            # If the node is in top N, add a label
+            if (i, node_idx) in top_nodes_set:
+                description = node_descriptions.get((i, node_idx), "")
+                print(description)
+                ax.text(
+                    x,
+                    y + node_size * 0.002,  # Slight offset above the node
+                    f"{description}",
+                    fontsize=8,
+                    ha='center',
+                    va='bottom',
+                    zorder=6,  # Ensure text is on top
+                    bbox=dict(
+                        boxstyle="round,pad=0.3",
+                        facecolor=text_bg_color,
+                        edgecolor='none',
+                        alpha=text_bg_alpha,
+                    ),
+                )
 
     # Set limits and remove axes
     ax.set_xlim(0, window_width)
@@ -293,4 +451,6 @@ for i in prompt_data["prompts"][:15]:
     print(i)
 # %%
 
+# %%
+print(list(connections.values())[0])
 # %%
