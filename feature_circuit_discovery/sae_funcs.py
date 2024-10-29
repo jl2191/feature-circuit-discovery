@@ -50,7 +50,7 @@ def load_sae(filename, device):
     return sae.to(device)
 
 
-def find_frequent_nonzero_indices(tensor_list, threshold=0.9):
+def find_frequent_nonzero_indices(tensor_list, threshold=0.9, activation_threshold = 0.0):
     """
     Identifies indices with non-zero values meeting or exceeding a threshold.
 
@@ -65,7 +65,7 @@ def find_frequent_nonzero_indices(tensor_list, threshold=0.9):
     result_indices = []
 
     for tensor in tensor_list:
-        non_zero_count = torch.sum(tensor != 0, dim=0) / tensor.shape[0]
+        non_zero_count = torch.sum(tensor > activation_threshold, dim=0) / tensor.shape[0]
         valid_indices = torch.where(non_zero_count >= threshold)[0]
         result_indices.append(valid_indices)
     return result_indices
@@ -116,7 +116,7 @@ def gather_residual_activations(model, target_layer, inputs):
     return activations["output"]
 
 
-def get_active_features(tokenized_prompts, model, device, verbose=False, threshold=0.9):
+def get_active_features(tokenized_prompts, model, device, verbose=False, threshold=0.9, activation_threshold = 0.0):
     """
     Identifies active features in the model's layers based on tokenized prompts.
 
@@ -146,7 +146,7 @@ def get_active_features(tokenized_prompts, model, device, verbose=False, thresho
     # find all the activated features in all the layers
     if verbose:
         print(feature_acts[0].shape)
-    activated_features = find_frequent_nonzero_indices(feature_acts, threshold)
+    activated_features = find_frequent_nonzero_indices(feature_acts, threshold, activation_threshold = activation_threshold)
 
     return {layer: features for layer, features in enumerate(activated_features)}
 
@@ -238,7 +238,7 @@ def describe_feature(
 
     elif mode == "local":
         file_path = (
-            f"/root/feature-circuit-discovery/datasets/neuronpedia/explanations/"
+            f"/tmp/feature-circuit-discovery/datasets/neuronpedia/explanations/"
             f"{model_id}_{sae_id}.json"
         )
         print(file_path)
@@ -356,7 +356,7 @@ def describe_features(
                 current_sae_id = sae_id
 
             file_path = (
-                f"/root/feature-circuit-discovery/datasets/neuronpedia/explanations/"
+                f"/tmp/feature-circuit-discovery/datasets/neuronpedia/explanations/"
                 f"{model_id}_{current_sae_id}.json"
             )
             descriptions[layer] = []
