@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 from huggingface_hub import hf_hub_download
 from tqdm import tqdm
-
+import matplotlib.pyplot as plt
 from feature_circuit_discovery.data import canonical_sae_filenames
 
 
@@ -406,6 +406,129 @@ def describe_features(
         return "Invalid mode. Choose either 'remote' or 'local'."
 
     return descriptions
+
+
+def identify_duplicate_features(model,
+                                inputs,
+                                upstream_layer_idx,
+                                downstream_layer_idx,
+                                upstream_features,
+                                downstream_features,
+                                threshold = 0.9,
+                                verbose = False,
+                                sae_upstream = None,
+                                sae_downstream = None):
+    """
+    the purpouse of this method is to identify duplicate features. Esspecially in adjacent layers it may be the case that features that are strongly causally connected to eachother represent the samething and are ultimatley the same feature. This method aims to identify such pairs through correlation.
+    """
+    device = model.device
+
+    if model is None:
+        raise ValueError("model must be provided")
+
+    if device is None:
+        device = next(model.parameters()).device
+
+    # Clear GPU cache and enable gradient computation
+    torch.cuda.empty_cache()
+    gc.collect()
+    torch.set_grad_enabled(True)
+    if sae_upstream == None:
+        if verbose:
+            print()
+            print(f"loading upstream sae (Layer {upstream_layer_idx})")
+        sae_upstream = load_sae(canonical_sae_filenames[upstream_layer_idx], device)
+
+    if sae_downstream == None:
+        if verbose:
+            print("upsteam sae loaded")
+            print(f"loading downstram sae (Layer {downstream_layer_idx})")
+        sae_downstream = load_sae(canonical_sae_filenames[downstream_layer_idx], device)
+
+    if verbose:
+        print("downsteam sae loaded")
+    m = len(upstream_features)
+    n = len(downstream_features)
+
+    d_model = sae_upstream.W_dec.size(1)
+
+    downstream_act = []
+    upstream_act = []
+
+    def gather_upstream_act_hook(module, module_input, module_output):
+        # Detach the activations to prevent graph retention
+        upstream_act.append(module_output[0].detach())
+        return module_output
+    
+    def gather_downstream_act_hook(module, module_input, module_output):
+        # Detach the activations to prevent graph retention
+        downstream_act.append(module_output[0].detach())
+        return module_output
+    
+    handle_up = model.model.layers[upstream_layer_idx].register_forward_hook(
+        gather_upstream_act_hook
+    )
+    handle_down = model.model.layers[downstream_layer_idx].register_forward_hook(
+        gather_downstream_act_hook
+    )
+    
+    for batch in inputs:
+        #print("type:",type(batch),":", batch)
+        # Run the forward pass within no_grad to disable gradient tracking
+        with torch.no_grad():
+            outputs = model(batch[0])
+
+    if sae_upstream == None:
+        if verbose:
+            print()
+            print(f"loading upstream sae (Layer {upstream_layer_idx})")
+        sae_upstream = load_sae(canonical_sae_filenames[upstream_layer_idx], device)
+    upstream_feature_acts = []
+    for batch_acts in upstream_act:
+        batch_acts.to(device)
+        upstream_feature_acts.append(sae_upstream.encode(batch_acts)[:, -1, upstream_features])
+    
+    if sae_downstream == None:
+        if verbose:
+            print("upsteam sae loaded")
+            print(f"loading downstram sae (Layer {downstream_layer_idx})")
+        sae_downstream = load_sae(canonical_sae_filenames[downstream_layer_idx], device)
+    
+    downstream_feature_acts = []
+    for batch_acts in downstream_act:
+        batch_acts.to(device)
+        downstream_feature_acts.append(sae_downstream.encode(batch_acts)[:, -1,downstream_features])
+    
+    upstream_feature_acts = torch.stack(upstream_feature_acts).reshape(len(upstream_feature_acts) * upstream_feature_acts[0].shape[0], upstream_feature_acts[0].shape[-1])#shape: [n_batches, batch_size, num_upstream_features] to #shape: [n_batches * batch_size, num_upstream_features]
+    downstream_feature_acts = torch.stack(downstream_feature_acts).reshape(len(downstream_feature_acts) * downstream_feature_acts[0].shape[0], downstream_feature_acts[0].shape[-1])#shape: [n_batches, batch_size, num_downstream_features] to #shape: [n_batches * batch_size, num_downstream_features]
+    # Compute correlation matrix
+    correlation_matrix = np.corrcoef(
+        upstream_feature_acts.cpu().detach().numpy(), downstream_feature_acts.cpu().detach().numpy(), rowvar=False
+    )
+    
+    # Separate the relevant portion of the matrix (cross-correlation)
+    num_upstream_features = upstream_feature_acts.shape[1]
+    num_downstream_features = downstream_feature_acts.shape[1]
+    cross_correlation_matrix = correlation_matrix[:num_upstream_features, num_upstream_features:]
+    if verbose:
+        # Plot the matrix
+        plt.figure(figsize=(10, 8))
+        plt.imshow(cross_correlation_matrix, cmap="coolwarm", aspect="auto")
+        plt.colorbar(label="Correlation Coefficient")
+        plt.xlabel("Downstream Features")
+        plt.ylabel("Upstream Features")
+        plt.title("Correlation Matrix: Upstream vs Downstream Features")
+        plt.show()
+    cross_correlation_matrix = torch.tensor(cross_correlation_matrix)
+    indices = torch.nonzero(cross_correlation_matrix > threshold).tolist()
+    for i in indices:
+        print(type(i))
+        i.append(float(cross_correlation_matrix[i[0], i[1]]))
+    result = [tuple(idx) for idx in indices]
+    return result
+
+
+
 
 
 def compute_gradient_matrix(
