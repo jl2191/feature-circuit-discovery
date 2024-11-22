@@ -11,11 +11,9 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from feature_circuit_discovery.data import canonical_sae_filenames
 from feature_circuit_discovery.sae_funcs import (
     compute_gradient_matrix,
-    get_active_features,
-    describe_features,
-    load_sae,
     identify_duplicate_features,
-    get_active_features_in_layer
+    get_active_features_in_layer,
+    describe_feature
 )
 
 # %%
@@ -52,12 +50,18 @@ tokenized_prompts = (
 dataset = TensorDataset(tokenized_prompts)
 dataloader = DataLoader(dataset, batch_size=10, shuffle=True)
 
-upstream_layer = 15
-downstream_layer = 16
+upstream_layer = 20
+downstream_layer = 21
 upstream_features = torch.tensor(get_active_features_in_layer(tokenized_prompts, model, upstream_layer))
 downstream_features = torch.tensor(get_active_features_in_layer(tokenized_prompts, model, downstream_layer))
 # %%
 
-identify_duplicate_features(model, dataloader, upstream_layer, downstream_layer, upstream_features, downstream_features, verbose=True)
-
+duplicates = identify_duplicate_features(model, dataloader, upstream_layer, downstream_layer, upstream_features, downstream_features, verbose=True, threshold=0.95)
+print(duplicates)
+# %%
+for i in duplicates:
+    print(f"correlation: {i[2]}, cosine similarity: {i[3]}")
+    print(f"Feature {i[0]} in layer {upstream_layer}:\n",describe_feature(i[0], upstream_layer))
+    print(f"Feature {i[1]} in layer {downstream_layer}:\n",describe_feature(i[1], downstream_layer))
+    print()
 # %%

@@ -521,10 +521,16 @@ def identify_duplicate_features(model,
         plt.show()
     cross_correlation_matrix = torch.tensor(cross_correlation_matrix)
     indices = torch.nonzero(cross_correlation_matrix > threshold).tolist()
+
     for i in indices:
-        print(type(i))
         i.append(float(cross_correlation_matrix[i[0], i[1]]))
-    result = [tuple(idx) for idx in indices]
+        us_feature_vector = sae_upstream.W_dec[upstream_features[i[0]]]
+        ds_feature_vector = sae_downstream.W_dec[downstream_features[i[1]]]
+        print("shape:",us_feature_vector.shape)
+        cosine_similarity = torch.nn.functional.cosine_similarity(us_feature_vector, ds_feature_vector, dim=0)
+        i.append(float(cosine_similarity))
+
+    result = [tuple([int(upstream_features[idx[0]]), int(downstream_features[idx[1]]), float(idx[2]), idx[3]]) for idx in indices]
     return result
 
 
