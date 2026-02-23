@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:deepmind.google)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.neuronpedia.org)",
+      "Bash(python:*)",
+      "Bash(poetry env info:*)",
+      "Bash(/Users/hannes/Desktop/feature-circuit-discovery/.venv/bin/python:*)",
+      "Bash(poetry run python:*)",
+      "Bash(poetry run:*)",
+      "Bash(poetry install:*)",
+      "Bash(sysctl:*)",
+      "Bash(pkill:*)",
+      "Bash(ls:*)",
+      "Bash(echo:*)",
+      "Bash(open:*)",
+      "WebFetch(domain:pypi.org)",
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "Bash(poetry show:*)",
+      "Bash(ps:*)",
+      "WebFetch(domain:www.lesswrong.com)",
+      "WebFetch(domain:decoderesearch.github.io)",
+      "Bash(.venv/bin/python:*)",
+      "Bash(poetry lock:*)",
+      "Bash(pip index:*)",
+      "Bash(.venv/bin/pip install:*)",
+      "Bash(chmod:*)",
+      "Bash(poetry env use:*)"
+    ]
+  }
+}

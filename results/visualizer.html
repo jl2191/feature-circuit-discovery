@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Feature Circuit Visualizer</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+  }
+  #sidebar {
+    width: 310px;
+    min-width: 310px;
+    background: #16213e;
+    padding: 20px;
+    overflow-y: auto;
+    border-right: 1px solid #0f3460;
+  }
+  #sidebar h1 { font-size: 18px; margin-bottom: 4px; color: #e94560; }
+  #sidebar .subtitle { font-size: 12px; color: #888; margin-bottom: 16px; }
+  .control-group { margin-bottom: 14px; }
+  .control-group label {
+    display: block; font-size: 13px; font-weight: 600; margin-bottom: 5px; color: #a0c4ff;
+  }
+  .control-group select, .control-group input[type="range"] { width: 100%; }
+  select {
+    background: #1a1a2e; color: #e0e0e0; border: 1px solid #0f3460;
+    padding: 6px 8px; border-radius: 4px; font-size: 13px;
+  }
+  input[type="range"] {
+    -webkit-appearance: none; height: 6px; background: #0f3460;
+    border-radius: 3px; outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 16px; height: 16px;
+    background: #e94560; border-radius: 50%; cursor: pointer;
+  }
+  #stats {
+    background: #1a1a2e; border: 1px solid #0f3460; border-radius: 6px;
+    padding: 10px; font-size: 12px; line-height: 1.7;
+  }
+  #stats .sl { color: #888; }
+  #stats .sv { color: #e94560; font-weight: 600; }
+  #graph-container { flex: 1; overflow: hidden; position: relative; }
+  #graph-container svg { position: absolute; top: 0; left: 0; }
+  .edge { pointer-events: stroke; cursor: pointer; }
+  .edge:hover { stroke-opacity: 1 !important; stroke-width: 4px !important; }
+  .node circle { cursor: grab; stroke: #fff; stroke-width: 1.5px; }
+  .node circle:active { cursor: grabbing; }
+  .node text { font-size: 9px; fill: #ccc; pointer-events: none; }
+  .node.dimmed circle { opacity: 0.15; }
+  .node.dimmed text { opacity: 0.15; }
+  .edge.dimmed { stroke-opacity: 0.02 !important; }
+  .layer-label { fill: #555; font-size: 11px; font-weight: 600; }
+  .layer-line { stroke: #222; stroke-width: 1; stroke-dasharray: 4,4; }
+  #tooltip {
+    position: fixed; background: #16213e; border: 1px solid #0f3460;
+    border-radius: 6px; padding: 8px 12px; font-size: 12px;
+    pointer-events: auto; display: none; z-index: 100;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4); max-width: 350px;
+  }
+  #tooltip a { pointer-events: auto; }
+  #tooltip .tl { color: #888; }
+  #tooltip .tv { color: #e94560; font-weight: 600; }
+  .legend { margin-top: 12px; font-size: 11px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+  .legend-swatch { width: 18px; height: 3px; border-radius: 2px; }
+  #tooltip a { color: #4dabf7; text-decoration: none; }
+  #tooltip a:hover { text-decoration: underline; }
+  #load-json-btn {
+    width: 100%; padding: 8px; margin-bottom: 6px;
+    background: #0f3460; color: #a0c4ff; border: 1px solid #4dabf7;
+    border-radius: 4px; font-size: 12px; cursor: pointer; font-weight: 600;
+  }
+  #load-json-btn:hover { background: #1a4a8a; }
+  #loaded-file { font-size: 10px; color: #666; margin-bottom: 10px; word-break: break-all; }
+  .section-label { font-size: 11px; color: #666; font-weight: 600; margin-top: 10px; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+  #metadata { font-size: 10px; color: #555; margin-top: 12px; line-height: 1.5; }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <h1>Feature Circuit Visualizer</h1>
+  <div class="subtitle">Multi-Layer SAE Gradient Circuit</div>
+
+  <div class="control-group">
+    <button id="load-json-btn" onclick="document.getElementById('json-file-input').click()">Load JSON File...</button>
+    <input type="file" id="json-file-input" accept=".json" style="display:none">
+    <div id="loaded-file"></div>
+  </div>
+
+  <div class="section-label">Feature Selection</div>
+
+  <div class="control-group">
+    <label>Global Top N Features: <span id="topn-value"></span></label>
+    <input type="range" id="topn-slider" min="5" max="200" value="30">
+  </div>
+
+  <div class="control-group">
+    <label>Ranking Mode</label>
+    <select id="rank-mode">
+      <option value="gradient">Total |Gradient| Influence</option>
+      <option value="frequency">Activation Frequency</option>
+    </select>
+  </div>
+
+  <div class="control-group">
+    <label>Min |Gradient| Threshold: <span id="threshold-value"></span></label>
+    <input type="range" id="threshold-slider" min="0" max="100" value="10" step="1">
+  </div>
+
+  <div class="section-label">Layout Forces</div>
+
+  <div class="control-group">
+    <label>Repulsion Strength: <span id="charge-value">-150</span></label>
+    <input type="range" id="charge-slider" min="-500" max="-20" value="-150" step="10">
+  </div>
+
+  <div class="control-group">
+    <label>Link Distance: <span id="link-dist-value">80</span></label>
+    <input type="range" id="link-dist-slider" min="10" max="300" value="80" step="10">
+  </div>
+
+  <div class="control-group">
+    <label>Edge Opacity: <span id="opacity-value"></span></label>
+    <input type="range" id="opacity-slider" min="5" max="100" value="50" step="5">
+  </div>
+
+  <div class="control-group">
+    <label>Stats</label>
+    <div id="stats"></div>
+  </div>
+
+  <div class="legend">
+    <div class="legend-item">
+      <div class="legend-swatch" style="background: #4dabf7;"></div>
+      <span>Positive gradient (excitatory)</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-swatch" style="background: #ff6b6b;"></div>
+      <span>Negative gradient (inhibitory)</span>
+    </div>
+    <div class="legend-item">
+      <span style="color:#888;">Node size = ranking score &middot; Click node to trace &middot; Drag to reposition</span>
+    </div>
+  </div>
+
+  <div id="metadata"></div>
+</div>
+
+<div id="graph-container">
+  <svg id="graph"></svg>
+</div>
+
+<div id="tooltip"></div>
+
+<script>
+let DATA = {"metadata":{},"layers":[],"layer_pairs":[]};
+
+// --- Mutable state recomputed on data load ---
+let featureGradScore = {};
+let featureFreq = {};
+let allFeatures = [];
+let globalMaxAbs = 0;
+
+function initData(data) {
+  DATA = data;
+  featureGradScore = {};
+  featureFreq = {};
+  allFeatures = [];
+
+  DATA.layers.forEach(layer => {
+    const li = layer.layer_idx;
+    layer.active_feature_ids.forEach(fid => {
+      const key = li + ":" + fid;
+      featureGradScore[key] = 0;
+      if (layer.activation_frequencies && layer.activation_frequencies[fid] !== undefined) {
+        featureFreq[key] = layer.activation_frequencies[fid];
+      } else {
+        featureFreq[key] = 1.0;
+      }
+    });
+  });
+
+  DATA.layer_pairs.forEach(pair => {
+    const mat = pair.gradient_matrix;
+    pair.upstream_feature_ids.forEach((uid, j) => {
+      const key = pair.upstream_layer + ":" + uid;
+      let sum = 0;
+      for (let i = 0; i < mat.length; i++) sum += Math.abs(mat[i][j]);
+      featureGradScore[key] = (featureGradScore[key] || 0) + sum;
+    });
+    pair.downstream_feature_ids.forEach((did, i) => {
+      const key = pair.downstream_layer + ":" + did;
+      let sum = 0;
+      for (let j = 0; j < mat[i].length; j++) sum += Math.abs(mat[i][j]);
+      featureGradScore[key] = (featureGradScore[key] || 0) + sum;
+    });
+  });
+
+  DATA.layers.forEach(layer => {
+    layer.active_feature_ids.forEach(fid => {
+      const key = layer.layer_idx + ":" + fid;
+      allFeatures.push({
+        layer: layer.layer_idx,
+        id: fid,
+        key: key,
+        gradScore: featureGradScore[key] || 0,
+        freq: featureFreq[key] || 0,
+      });
+    });
+  });
+
+  globalMaxAbs = DATA.layer_pairs.length > 0
+    ? Math.max(...DATA.layer_pairs.map(p => p.stats.max_abs))
+    : 0;
+  topnSlider.max = Math.min(allFeatures.length, 500);
+
+  const meta = DATA.metadata || {};
+  document.getElementById("metadata").innerHTML =
+    `<b>Model:</b> ${meta.model || "?"}<br>` +
+    `<b>Time:</b> ${meta.timestamp || "?"}<br>` +
+    `<b>Prompts:</b> ${(meta.prompts || []).length} (thresh=${meta.activation_threshold || "?"})<br>` +
+    `<b>Device:</b> ${meta.device || "?"} (${meta.dtype || "?"})<br>` +
+    `<b>Layers:</b> ${DATA.layers.length} | <b>Pairs:</b> ${DATA.layer_pairs.length}`;
+
+  selectedNode = null;
+  rebuildGraph();
+}
+
+// --- JSON file loader ---
+document.getElementById("json-file-input").addEventListener("change", function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  document.getElementById("loaded-file").textContent = file.name;
+  const reader = new FileReader();
+  reader.onload = function(ev) {
+    try { initData(JSON.parse(ev.target.result)); }
+    catch (err) { alert("Failed to parse JSON: " + err.message); }
+  };
+  reader.readAsText(file);
+});
+
+// --- Neuronpedia description cache & tooltip integration ---
+const descCache = {};
+let hoveredNodeKey = null;  // track which node tooltip is showing
+
+function buildNodeTooltipHTML(d, description) {
+  const score = currentMode === "gradient" ? d.gradScore : d.freq;
+  const npUrl = `https://www.neuronpedia.org/gemma-2-2b/${d.layer}-gemmascope-res-16k/${d.id}`;
+  let html =
+    `<span class="tl">Layer ${d.layer} Feature</span> <span class="tv">#${d.id}</span><br>` +
+    `<span class="tl">${currentMode === "gradient" ? "Total |grad|" : "Activation freq"}:</span> <span class="tv">${score.toFixed(4)}</span>`;
+  if (description === undefined) {
+    html += `<br><span class="tl" style="font-style:italic;">Loading description...</span>`;
+  } else if (description) {
+    html += `<br><span class="tl">Description:</span> <span style="color:#a0c4ff;font-style:italic;">"${description}"</span>`;
+  }
+  html += `<br><a href="${npUrl}" target="_blank" style="color:#4dabf7;text-decoration:none;font-size:11px;">Neuronpedia &#8599;</a>`;
+  return html;
+}
+
+function fetchAndShowDescription(d) {
+  const key = d.layer + ":" + d.id;
+  if (key in descCache) return;  // already cached, tooltip was built with it
+  descCache[key] = undefined;  // mark as loading
+  const url = `https://www.neuronpedia.org/api/feature/gemma-2-2b/${d.layer}-gemmascope-res-16k/${d.id}`;
+  fetch(url)
+    .then(r => r.ok ? r.json() : null)
+    .then(data => {
+      descCache[key] = (data && data.explanations && data.explanations.length > 0)
+        ? (data.explanations[0].description || null) : null;
+      // Update tooltip if still hovering this node
+      if (hoveredNodeKey === key) {
+        tooltip.innerHTML = buildNodeTooltipHTML(d, descCache[key]);
+      }
+    })
+    .catch(() => {
+      descCache[key] = null;
+      if (hoveredNodeKey === key) {
+        tooltip.innerHTML = buildNodeTooltipHTML(d, null);
+      }
+    });
+}
+
+// --- State ---
+let selectedNode = null;
+let simulation = null;
+let currentNodes = [];
+let currentEdges = [];
+let currentActiveLayers = [];
+let layerXPositions = {};
+let maxScore = 1;
+let currentMode = "gradient";
+
+// --- Controls ---
+const topnSlider = document.getElementById("topn-slider");
+const rankMode = document.getElementById("rank-mode");
+const thresholdSlider = document.getElementById("threshold-slider");
+const chargeSlider = document.getElementById("charge-slider");
+const linkDistSlider = document.getElementById("link-dist-slider");
+const opacitySlider = document.getElementById("opacity-slider");
+const tooltip = document.getElementById("tooltip");
+
+// --- SVG setup with zoom ---
+const container = document.getElementById("graph-container");
+const svgEl = d3.select("#graph");
+let gRoot, gEdges, gNodes, gLabels;
+
+function setupSVG() {
+  const w = container.clientWidth;
+  const h = container.clientHeight;
+  svgEl.attr("width", w).attr("height", h);
+  svgEl.selectAll("*").remove();
+
+  const zoom = d3.zoom()
+    .scaleExtent([0.1, 5])
+    .on("zoom", (event) => { gRoot.attr("transform", event.transform); });
+  svgEl.call(zoom);
+
+  gRoot = svgEl.append("g");
+  gLabels = gRoot.append("g");
+  gEdges = gRoot.append("g");
+  gNodes = gRoot.append("g");
+}
+setupSVG();
+window.addEventListener("resize", () => {
+  svgEl.attr("width", container.clientWidth).attr("height", container.clientHeight);
+});
+
+// --- Event listeners ---
+topnSlider.addEventListener("input", () => { selectedNode = null; rebuildGraph(); });
+rankMode.addEventListener("change", () => { selectedNode = null; rebuildGraph(); });
+thresholdSlider.addEventListener("input", rebuildGraph);
+
+chargeSlider.addEventListener("input", function() {
+  document.getElementById("charge-value").textContent = this.value;
+  if (simulation) {
+    simulation.force("charge").strength(+this.value);
+    simulation.alpha(0.5).restart();
+  }
+});
+
+linkDistSlider.addEventListener("input", function() {
+  document.getElementById("link-dist-value").textContent = this.value;
+  if (simulation) {
+    simulation.force("link").distance(+this.value);
+    simulation.alpha(0.5).restart();
+  }
+});
+
+opacitySlider.addEventListener("input", function() {
+  const opacity = +this.value / 100;
+  document.getElementById("opacity-value").textContent = opacity.toFixed(2);
+  gEdges.selectAll("line").attr("stroke-opacity", d => {
+    // Keep dimmed edges dim
+    if (selectedNode) {
+      if (d.uKey !== selectedNode && d.dKey !== selectedNode) return 0.02;
+    }
+    return opacity;
+  });
+});
+
+// --- Main rebuild: recompute nodes/edges, restart simulation ---
+function rebuildGraph() {
+  const topN = +topnSlider.value;
+  const mode = rankMode.value;
+  currentMode = mode;
+  const threshPct = +thresholdSlider.value;
+  const threshold = (threshPct / 100) * globalMaxAbs;
+  const opacity = +opacitySlider.value / 100;
+  const chargeStrength = +chargeSlider.value;
+  const linkDist = +linkDistSlider.value;
+
+  document.getElementById("topn-value").textContent = topN;
+  document.getElementById("threshold-value").textContent = threshold.toFixed(4);
+  document.getElementById("opacity-value").textContent = opacity.toFixed(2);
+
+  // Rank and select top N features globally
+  const sorted = [...allFeatures].sort((a, b) =>
+    mode === "gradient" ? b.gradScore - a.gradScore : b.freq - a.freq
+  );
+  const selected = sorted.slice(0, topN);
+  const selectedKeys = new Set(selected.map(f => f.key));
+
+  const layerFeatures = {};
+  selected.forEach(f => {
+    if (!layerFeatures[f.layer]) layerFeatures[f.layer] = [];
+    layerFeatures[f.layer].push(f);
+  });
+  const activeLayers = Object.keys(layerFeatures).map(Number).sort((a, b) => a - b);
+  currentActiveLayers = activeLayers;
+
+  // Build edges
+  const edges = [];
+  let globalMaxEdge = 0;
+  DATA.layer_pairs.forEach(pair => {
+    const mat = pair.gradient_matrix;
+    pair.upstream_feature_ids.forEach((uid, j) => {
+      const uKey = pair.upstream_layer + ":" + uid;
+      if (!selectedKeys.has(uKey)) return;
+      pair.downstream_feature_ids.forEach((did, i) => {
+        const dKey = pair.downstream_layer + ":" + did;
+        if (!selectedKeys.has(dKey)) return;
+        const val = mat[i][j];
+        if (Math.abs(val) >= threshold) {
+          edges.push({ uKey, dKey, uLayer: pair.upstream_layer, uId: uid,
+                        dLayer: pair.downstream_layer, dId: did, value: val });
+          if (Math.abs(val) > globalMaxEdge) globalMaxEdge = Math.abs(val);
+        }
+      });
+    });
+  });
+  currentEdges = edges;
+
+  // Stats
+  const layerCounts = activeLayers.map(l => `L${l}:${layerFeatures[l].length}`).join(", ");
+  document.getElementById("stats").innerHTML =
+    `<span class="sl">Features:</span> <span class="sv">${selected.length}</span> across <span class="sv">${activeLayers.length}</span> layers<br>` +
+    `<span class="sl">Visible edges:</span> <span class="sv">${edges.length}</span><br>` +
+    `<span class="sl">Per layer:</span> <span style="color:#aaa;font-size:11px;">${layerCounts}</span>`;
+
+  // Compute fixed x positions per layer column
+  const w = container.clientWidth;
+  const h = container.clientHeight;
+  const marginX = 60;
+  const colSpacing = activeLayers.length > 1
+    ? (w - 2 * marginX) / (activeLayers.length - 1)
+    : 0;
+
+  layerXPositions = {};
+  activeLayers.forEach((layerIdx, colIdx) => {
+    layerXPositions[layerIdx] = marginX + colIdx * colSpacing;
+  });
+
+  maxScore = selected.length > 0
+    ? Math.max(...selected.map(f => mode === "gradient" ? f.gradScore : f.freq))
+    : 1;
+
+  // Build simulation node data — preserve positions if keys match
+  const oldPosMap = {};
+  currentNodes.forEach(n => { oldPosMap[n.key] = { x: n.x, y: n.y }; });
+
+  currentNodes = selected.map(f => {
+    const targetX = layerXPositions[f.layer] || w / 2;
+    const old = oldPosMap[f.key];
+    return {
+      ...f,
+      targetX,
+      x: old ? old.x : targetX + (Math.random() - 0.5) * 10,
+      y: old ? old.y : h / 2 + (Math.random() - 0.5) * h * 0.6,
+    };
+  });
+
+  // Build link data for d3-force (reference by index)
+  const nodeIndex = {};
+  currentNodes.forEach((n, i) => { nodeIndex[n.key] = i; });
+  const links = edges
+    .filter(e => nodeIndex[e.uKey] !== undefined && nodeIndex[e.dKey] !== undefined)
+    .map(e => ({
+      source: nodeIndex[e.uKey],
+      target: nodeIndex[e.dKey],
+      value: e.value
+    }));
+
+  // Stop old simulation
+  if (simulation) simulation.stop();
+
+  // Create force simulation
+  simulation = d3.forceSimulation(currentNodes)
+    .force("link", d3.forceLink(links).distance(linkDist).strength(0.1))
+    .force("charge", d3.forceManyBody().strength(chargeStrength))
+    .force("collide", d3.forceCollide().radius(d => 6 + 8 * ((mode === "gradient" ? d.gradScore : d.freq) / (maxScore || 1))))
+    .force("x", d3.forceX(d => d.targetX).strength(0.8))
+    .force("y", d3.forceY(h / 2).strength(0.02))
+    .alphaDecay(0.01)
+    .on("tick", ticked);
+
+  // --- Draw layer guide lines ---
+  gLabels.selectAll("*").remove();
+  activeLayers.forEach(layerIdx => {
+    const x = layerXPositions[layerIdx];
+    gLabels.append("line")
+      .attr("class", "layer-line")
+      .attr("x1", x).attr("x2", x)
+      .attr("y1", -2000).attr("y2", 4000);
+    gLabels.append("text")
+      .attr("class", "layer-label")
+      .attr("x", x).attr("y", 20)
+      .attr("text-anchor", "middle")
+      .text(`L${layerIdx}`);
+  });
+
+  // --- Draw edges ---
+  const edgeSelection = gEdges.selectAll("line")
+    .data(edges, d => d.uKey + "-" + d.dKey);
+  edgeSelection.exit().remove();
+  const edgeEnter = edgeSelection.enter().append("line").attr("class", "edge");
+  const edgeMerge = edgeEnter.merge(edgeSelection)
+    .attr("stroke", d => d.value >= 0 ? "#4dabf7" : "#ff6b6b")
+    .attr("stroke-width", d => 0.4 + 3 * (Math.abs(d.value) / (globalMaxEdge || 1)))
+    .attr("stroke-opacity", opacity)
+    .attr("data-ukey", d => d.uKey)
+    .attr("data-dkey", d => d.dKey)
+    .on("mouseover", function(event, d) {
+      tooltip.style.display = "block";
+      tooltip.innerHTML =
+        `<span class="tl">From:</span> <span class="tv">L${d.uLayer} #${d.uId}</span><br>` +
+        `<span class="tl">To:</span> <span class="tv">L${d.dLayer} #${d.dId}</span><br>` +
+        `<span class="tl">Gradient:</span> <span class="tv">${d.value.toFixed(6)}</span>`;
+      tooltip.style.left = (event.clientX + 12) + "px";
+      tooltip.style.top = (event.clientY - 10) + "px";
+    })
+    .on("mousemove", function(event) {
+      tooltip.style.left = (event.clientX + 12) + "px";
+      tooltip.style.top = (event.clientY - 10) + "px";
+    })
+    .on("mouseout", () => { tooltip.style.display = "none"; });
+
+  // --- Draw nodes ---
+  const nodeSelection = gNodes.selectAll("g.node")
+    .data(currentNodes, d => d.key);
+  nodeSelection.exit().remove();
+
+  const nodeEnter = nodeSelection.enter().append("g").attr("class", "node");
+
+  nodeEnter.append("circle")
+    .attr("r", d => {
+      const score = mode === "gradient" ? d.gradScore : d.freq;
+      return 4 + 6 * (score / (maxScore || 1));
+    })
+    .attr("fill", d => {
+      const t = activeLayers.length > 1
+        ? activeLayers.indexOf(d.layer) / (activeLayers.length - 1) : 0.5;
+      return d3.interpolateRdYlBu(1 - t);
+    });
+
+  nodeEnter.append("text")
+    .attr("dy", d => -(6 + 6 * ((mode === "gradient" ? d.gradScore : d.freq) / (maxScore || 1))) - 2)
+    .attr("text-anchor", "middle")
+    .text(d => d.id);
+
+  const nodeMerge = nodeEnter.merge(nodeSelection);
+
+  // Update circle sizes and colors on merge (for existing nodes that changed)
+  nodeMerge.select("circle")
+    .attr("r", d => {
+      const score = mode === "gradient" ? d.gradScore : d.freq;
+      return 4 + 6 * (score / (maxScore || 1));
+    })
+    .attr("fill", d => {
+      const t = activeLayers.length > 1
+        ? activeLayers.indexOf(d.layer) / (activeLayers.length - 1) : 0.5;
+      return d3.interpolateRdYlBu(1 - t);
+    });
+
+  nodeMerge
+    .on("mouseover", function(event, d) {
+      hoveredNodeKey = d.layer + ":" + d.id;
+      const cached = descCache[hoveredNodeKey];
+      tooltip.style.display = "block";
+      tooltip.innerHTML = buildNodeTooltipHTML(d, cached);
+      tooltip.style.left = (event.clientX + 12) + "px";
+      tooltip.style.top = (event.clientY - 10) + "px";
+      // Fetch description if not yet cached
+      if (!(hoveredNodeKey in descCache)) fetchAndShowDescription(d);
+    })
+    .on("mousemove", function(event) {
+      tooltip.style.left = (event.clientX + 12) + "px";
+      tooltip.style.top = (event.clientY - 10) + "px";
+    })
+    .on("mouseout", () => { hoveredNodeKey = null; tooltip.style.display = "none"; })
+    .call(d3.drag()
+      .on("start", dragstarted)
+      .on("drag", dragged)
+      .on("end", dragended));
+
+  applySelection();
+}
+
+// --- Simulation tick: update positions ---
+function ticked() {
+  const opacity = +opacitySlider.value / 100;
+  // Build a quick lookup from key -> node for edge positioning
+  const nodeMap = {};
+  currentNodes.forEach(n => { nodeMap[n.key] = n; });
+
+  gEdges.selectAll("line")
+    .attr("x1", d => nodeMap[d.uKey] ? nodeMap[d.uKey].x : 0)
+    .attr("y1", d => nodeMap[d.uKey] ? nodeMap[d.uKey].y : 0)
+    .attr("x2", d => nodeMap[d.dKey] ? nodeMap[d.dKey].x : 0)
+    .attr("y2", d => nodeMap[d.dKey] ? nodeMap[d.dKey].y : 0);
+
+  gNodes.selectAll("g.node")
+    .attr("transform", d => `translate(${d.x},${d.y})`);
+}
+
+// --- Drag handlers (constrain x to layer column) ---
+function dragstarted(event, d) {
+  if (!event.active) simulation.alphaTarget(0.3).restart();
+  d.fx = d.targetX;  // lock x to layer column
+  d.fy = d.y;
+}
+
+function dragged(event, d) {
+  d.fx = d.targetX;  // keep x pinned
+  d.fy = event.y;     // only allow vertical drag
+}
+
+function dragended(event, d) {
+  if (!event.active) simulation.alphaTarget(0);
+  d.fx = null;
+  d.fy = null;
+}
+
+// --- Selection highlighting ---
+function applySelection() {
+  const opacity = +opacitySlider.value / 100;
+  if (!selectedNode) {
+    d3.selectAll(".node").classed("dimmed", false);
+    gEdges.selectAll("line").attr("stroke-opacity", opacity);
+    return;
+  }
+
+  const connectedKeys = new Set();
+  connectedKeys.add(selectedNode);
+
+  gEdges.selectAll("line").attr("stroke-opacity", function(d) {
+    if (d.uKey === selectedNode || d.dKey === selectedNode) {
+      connectedKeys.add(d.uKey);
+      connectedKeys.add(d.dKey);
+      return opacity;
+    }
+    return 0.02;
+  });
+
+  d3.selectAll(".node").classed("dimmed", d => !connectedKeys.has(d.key));
+}
+
+// Click on background to deselect
+svgEl.on("click", function(event) {
+  if (event.target === svgEl.node()) {
+    selectedNode = null;
+    applySelection();
+  }
+});
+
+// Initial load
+initData(DATA);
+</script>
+</body>
+</html>

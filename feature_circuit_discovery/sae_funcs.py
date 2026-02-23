@@ -1,12 +1,18 @@
 import gc
 
-import numpy as np
 import torch
 import torch.nn as nn
 from huggingface_hub import hf_hub_download
+from safetensors.torch import load_file as load_safetensors
 from tqdm import tqdm
 
-from feature_circuit_discovery.data import canonical_sae_filenames
+from feature_circuit_discovery.data import (
+    MAX_SAE_LAYER,
+    NEURONPEDIA_MODEL_ID,
+    NEURONPEDIA_SAE_SET,
+    SAE_HF_REPO,
+    canonical_sae_filenames,
+)
 
 
 class JumpReLUSAE(nn.Module):
@@ -35,13 +41,16 @@ class JumpReLUSAE(nn.Module):
 
 def load_sae(filename, device):
     path_to_params = hf_hub_download(
-        repo_id="google/gemma-scope-2b-pt-res",
+        repo_id=SAE_HF_REPO,
         filename=filename,
         force_download=False,
     )
-    params = np.load(path_to_params)
-    pt_params = {k: torch.from_numpy(v).to(device) for k, v in params.items()}
-    sae = JumpReLUSAE(params["W_enc"].shape[0], params["W_enc"].shape[1])
+    tensors = load_safetensors(path_to_params)
+    # Gemma Scope 2 uses lowercase keys (w_enc, b_dec); remap to JumpReLUSAE (W_enc, b_dec)
+    KEY_MAP = {"w_enc": "W_enc", "w_dec": "W_dec", "b_enc": "b_enc", "b_dec": "b_dec", "threshold": "threshold"}
+    pt_params = {KEY_MAP.get(k, k): v for k, v in tensors.items()}
+    pt_params = {k: v.to(device) for k, v in pt_params.items()}
+    sae = JumpReLUSAE(pt_params["W_enc"].shape[0], pt_params["W_enc"].shape[1])
     sae.load_state_dict(pt_params)
     return sae.to(device)
 
@@ -62,7 +71,8 @@ def gather_residual_activations(model, target_layer, inputs):
     activations = {}
 
     def hook_fn(module, input, output):
-        activations["output"] = output[0]
+        # Gemma 2 layers return tuple (hidden_states, ...); Gemma 3 returns tensor directly
+        activations["output"] = output[0] if isinstance(output, tuple) else output
 
     handle = model.model.layers[target_layer].register_forward_hook(hook_fn)
     model(inputs)
@@ -80,7 +90,8 @@ def get_active_features(prompts, tokenizer, model, device, threshold=0.9):
     )
     feature_acts = []
 
-    for layer in tqdm(range(model.config.num_hidden_layers)):
+    num_layers = min(model.config.num_hidden_layers, MAX_SAE_LAYER + 1)
+    for layer in tqdm(range(num_layers)):
         sae = load_sae(canonical_sae_filenames[layer], device)
         activations = gather_residual_activations(model, layer, tokenized_prompts)
         sae_activations = sae.encode(activations)
@@ -95,18 +106,72 @@ def get_active_features(prompts, tokenizer, model, device, threshold=0.9):
     return activated_features
 
 
-def describe_feature(layer, idx):
+def describe_feature(layer: int, idx: int) -> str | None:
+    """Fetch the auto-interp description of an SAE feature from Neuronpedia.
+
+    Args:
+        layer: Layer index (0-20 for Gemma 3 1B resid_post_all).
+        idx: Feature index in the 16k-width SAE.
+
+    Returns:
+        Description string, or None if unavailable.
     """
-    Returns a string description of a a feature of a certain layer and index of gemma 2 2b
-    """
-    pass
+    import requests
+
+    url = f"https://www.neuronpedia.org/api/feature/{NEURONPEDIA_MODEL_ID}/{layer}-{NEURONPEDIA_SAE_SET}/{idx}"
+    try:
+        resp = requests.get(url, timeout=10)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        explanations = data.get("explanations", [])
+        if explanations:
+            return explanations[0].get("description")
+        return None
+    except Exception:
+        return None
 
 
-def describe_features(layers, indices):
+def describe_features(
+    features: list[tuple[int, int]],
+    max_concurrent: int = 10,
+) -> dict[tuple[int, int], str]:
+    """Fetch descriptions for multiple features from Neuronpedia.
+
+    Args:
+        features: List of (layer, feature_idx) tuples.
+        max_concurrent: Max concurrent requests.
+
+    Returns:
+        Dict mapping (layer, feature_idx) -> description string.
     """
-    Describes multiple features of multiplae layers. layers and indices should therefore be 1 and 2 dimensional lists of integers.
-    """
-    pass
+    import concurrent.futures
+    import requests
+
+    results: dict[tuple[int, int], str] = {}
+
+    def fetch_one(layer: int, idx: int) -> tuple[int, int, str | None]:
+        url = f"https://www.neuronpedia.org/api/feature/{NEURONPEDIA_MODEL_ID}/{layer}-{NEURONPEDIA_SAE_SET}/{idx}"
+        try:
+            resp = requests.get(url, timeout=10)
+            if resp.status_code != 200:
+                return (layer, idx, None)
+            data = resp.json()
+            explanations = data.get("explanations", [])
+            if explanations:
+                return (layer, idx, explanations[0].get("description"))
+            return (layer, idx, None)
+        except Exception:
+            return (layer, idx, None)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_concurrent) as executor:
+        futures = [executor.submit(fetch_one, layer, idx) for layer, idx in features]
+        for future in concurrent.futures.as_completed(futures):
+            layer, idx, desc = future.result()
+            if desc:
+                results[(layer, idx)] = desc
+
+    return results
 
 
 def compute_gradient_matrix(
