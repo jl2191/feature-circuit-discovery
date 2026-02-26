@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Feature Circuit Visualizer</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
+<script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -50,6 +52,7 @@
   #stats .sv { color: #e94560; font-weight: 600; }
   #graph-container { flex: 1; overflow: hidden; position: relative; }
   #graph-container svg { position: absolute; top: 0; left: 0; }
+  #graph-3d { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: none; }
   .edge { pointer-events: stroke; cursor: pointer; }
   .edge:hover { stroke-opacity: 1 !important; stroke-width: 4px !important; }
   .node circle { cursor: grab; stroke: #fff; stroke-width: 1.5px; }
@@ -92,6 +95,7 @@
   <div class="subtitle">Multi-Layer SAE Gradient Circuit</div>
 
   <div class="control-group">
+    <button id="view-mode-btn" style="width:100%;padding:8px;margin-bottom:6px;background:#0f3460;color:#a0c4ff;border:1px solid #4dabf7;border-radius:4px;font-size:12px;cursor:pointer;font-weight:600;">Switch to 3D View</button>
     <button id="load-json-btn" onclick="document.getElementById('json-file-input').click()">Load JSON File...</button>
     <input type="file" id="json-file-input" accept=".json" style="display:none">
     <div id="loaded-file"></div>
@@ -100,15 +104,35 @@
   <div class="section-label">Feature Selection</div>
 
   <div class="control-group">
+    <label>Node Selection Mode</label>
+    <select id="selection-mode">
+      <option value="topn">Top N Features</option>
+      <option value="edge-threshold">Edge Threshold</option>
+    </select>
+  </div>
+
+  <div class="control-group" id="topn-group">
     <label>Global Top N Features: <span id="topn-value"></span></label>
     <input type="range" id="topn-slider" min="5" max="200" value="30">
   </div>
 
-  <div class="control-group">
+  <div class="control-group" id="rank-group">
     <label>Ranking Mode</label>
     <select id="rank-mode">
       <option value="gradient">Total |Gradient| Influence</option>
+      <option value="logit">Logit |Gradient| (Yes+No)</option>
       <option value="frequency">Activation Frequency</option>
+    </select>
+  </div>
+
+  <div class="control-group">
+    <label>Max Layer Distance</label>
+    <select id="max-dist">
+      <option value="0">All pairs</option>
+      <option value="1" selected>Adjacent only (d=1)</option>
+      <option value="2">d &le; 2</option>
+      <option value="3">d &le; 3</option>
+      <option value="5">d &le; 5</option>
     </select>
   </div>
 
@@ -139,6 +163,13 @@
     <div id="stats"></div>
   </div>
 
+  <div class="section-label">Export</div>
+
+  <div class="control-group">
+    <button id="export-graph-btn" style="width:100%;padding:8px;background:#0f3460;color:#a0c4ff;border:1px solid #4dabf7;border-radius:4px;font-size:12px;cursor:pointer;font-weight:600;">Export Graph JSON for LLM...</button>
+    <div id="export-progress" style="display:none;font-size:11px;color:#a0c4ff;margin-top:4px;"></div>
+  </div>
+
   <div class="legend">
     <div class="legend-item">
       <div class="legend-swatch" style="background: #4dabf7;"></div>
@@ -147,6 +178,10 @@
     <div class="legend-item">
       <div class="legend-swatch" style="background: #ff6b6b;"></div>
       <span>Negative gradient (inhibitory)</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-swatch" style="background: #e94560; height: 10px; width: 10px; border-radius: 50%;"></div>
+      <span>Logit attribution node</span>
     </div>
     <div class="legend-item">
       <span style="color:#888;">Node size = ranking score &middot; Click node to trace &middot; Drag to reposition</span>
@@ -158,6 +193,7 @@
 
 <div id="graph-container">
   <svg id="graph"></svg>
+  <div id="graph-3d"></div>
 </div>
 
 <div id="tooltip"></div>
@@ -176,6 +212,10 @@ function initData(data) {
   featureGradScore = {};
   featureFreq = {};
   allFeatures = [];
+
+  // Set Neuronpedia config based on model
+  const modelId = (DATA.metadata && DATA.metadata.model) || "";
+  npConfig = NEURONPEDIA_CONFIG_MAP[modelId] || null;
 
   DATA.layers.forEach(layer => {
     const li = layer.layer_idx;
@@ -224,6 +264,59 @@ function initData(data) {
     : 0;
   topnSlider.max = Math.min(allFeatures.length, 500);
 
+  // Parse logit nodes
+  DATA._logitNodes = [];
+  DATA._logitEdges = [];
+  if (DATA.logit_nodes) {
+    const ln = DATA.logit_nodes;
+    ln.token_labels.forEach((label, tIdx) => {
+      DATA._logitNodes.push({
+        key: "logit:" + ln.token_ids[tIdx],
+        layer: "logit",
+        id: ln.token_ids[tIdx],
+        label: label,
+        isLogitNode: true,
+        gradScore: 0,
+        freq: 0,
+      });
+    });
+    // Build logit edges from all layers' features to logit nodes
+    Object.keys(ln.gradients_by_layer).forEach(layerStr => {
+      const layerData = ln.gradients_by_layer[layerStr];
+      const upLayer = parseInt(layerStr);
+      layerData.upstream_feature_ids.forEach((uid, j) => {
+        ln.token_labels.forEach((label, tIdx) => {
+          const val = layerData.gradients[tIdx][j];
+          DATA._logitEdges.push({
+            uKey: upLayer + ":" + uid,
+            dKey: "logit:" + ln.token_ids[tIdx],
+            uLayer: upLayer,
+            uId: uid,
+            dLayer: "logit",
+            dId: ln.token_ids[tIdx],
+            dLabel: label,
+            value: val,
+            isLogitEdge: true,
+          });
+        });
+      });
+    });
+    // Compute total |gradient| for each logit node (for display)
+    DATA._logitNodes.forEach(node => {
+      let total = 0;
+      DATA._logitEdges.forEach(e => {
+        if (e.dKey === node.key) total += Math.abs(e.value);
+      });
+      node.gradScore = total;
+    });
+    // Compute per-feature logit grad score (sum of |grad| across all logit tokens)
+    const featureLogitScore = {};
+    DATA._logitEdges.forEach(e => {
+      featureLogitScore[e.uKey] = (featureLogitScore[e.uKey] || 0) + Math.abs(e.value);
+    });
+    allFeatures.forEach(f => { f.logitScore = featureLogitScore[f.key] || 0; });
+  }
+
   const meta = DATA.metadata || {};
   document.getElementById("metadata").innerHTML =
     `<b>Model:</b> ${meta.model || "?"}<br>` +
@@ -249,31 +342,52 @@ document.getElementById("json-file-input").addEventListener("change", function(e
   reader.readAsText(file);
 });
 
-// --- Neuronpedia description cache & tooltip integration ---
+// --- Neuronpedia config: derived from DATA.metadata.model in initData() ---
 const descCache = {};
 let hoveredNodeKey = null;  // track which node tooltip is showing
 
+// Model ID -> Neuronpedia config mapping
+const NEURONPEDIA_CONFIG_MAP = {
+  "google/gemma-3-1b-pt": { npModel: "gemma-3-1b", scope: "gemmascope-2-res-16k", layers: new Set([7, 13, 17, 22]) },
+  "google/gemma-2-2b":    { npModel: "gemma-2-2b", scope: "gemmascope-res-16k",   layers: null },  // null = all layers
+};
+let npConfig = NEURONPEDIA_CONFIG_MAP["google/gemma-3-1b-pt"];  // default
+
+function npHasLayer(layer) {
+  return npConfig && (npConfig.layers === null || npConfig.layers.has(layer));
+}
+
+function npFeatureUrl(layer, featureId) {
+  return `https://www.neuronpedia.org/${npConfig.npModel}/${layer}-${npConfig.scope}/${featureId}`;
+}
+
+function npApiUrl(layer, featureId) {
+  return `https://www.neuronpedia.org/api/feature/${npConfig.npModel}/${layer}-${npConfig.scope}/${featureId}`;
+}
+
 function buildNodeTooltipHTML(d, description) {
-  const score = currentMode === "gradient" ? d.gradScore : d.freq;
-  const npUrl = `https://www.neuronpedia.org/gemma-2-2b/${d.layer}-gemmascope-res-16k/${d.id}`;
+  const score = nodeScore(d);
+  const scoreLabel = currentMode === "logit" ? "Logit |grad|" : currentMode === "gradient" ? "Total |grad|" : "Activation freq";
   let html =
     `<span class="tl">Layer ${d.layer} Feature</span> <span class="tv">#${d.id}</span><br>` +
-    `<span class="tl">${currentMode === "gradient" ? "Total |grad|" : "Activation freq"}:</span> <span class="tv">${score.toFixed(4)}</span>`;
-  if (description === undefined) {
-    html += `<br><span class="tl" style="font-style:italic;">Loading description...</span>`;
-  } else if (description) {
-    html += `<br><span class="tl">Description:</span> <span style="color:#a0c4ff;font-style:italic;">"${description}"</span>`;
+    `<span class="tl">${scoreLabel}:</span> <span class="tv">${score.toFixed(4)}</span>`;
+  if (npHasLayer(d.layer)) {
+    if (description === undefined) {
+      html += `<br><span class="tl" style="font-style:italic;">Loading description...</span>`;
+    } else if (description) {
+      html += `<br><span class="tl">Description:</span> <span style="color:#a0c4ff;font-style:italic;">"${description}"</span>`;
+    }
+    html += `<br><a href="${npFeatureUrl(d.layer, d.id)}" target="_blank" style="color:#4dabf7;text-decoration:none;font-size:11px;">Neuronpedia &#8599;</a>`;
   }
-  html += `<br><a href="${npUrl}" target="_blank" style="color:#4dabf7;text-decoration:none;font-size:11px;">Neuronpedia &#8599;</a>`;
   return html;
 }
 
 function fetchAndShowDescription(d) {
   const key = d.layer + ":" + d.id;
   if (key in descCache) return;  // already cached, tooltip was built with it
+  if (!npHasLayer(d.layer)) { descCache[key] = null; return; }
   descCache[key] = undefined;  // mark as loading
-  const url = `https://www.neuronpedia.org/api/feature/gemma-2-2b/${d.layer}-gemmascope-res-16k/${d.id}`;
-  fetch(url)
+  fetch(npApiUrl(d.layer, d.id))
     .then(r => r.ok ? r.json() : null)
     .then(data => {
       descCache[key] = (data && data.explanations && data.explanations.length > 0)
@@ -293,6 +407,7 @@ function fetchAndShowDescription(d) {
 
 // --- State ---
 let selectedNode = null;
+let pinnedTooltip = null;  // key of node whose tooltip is pinned
 let simulation = null;
 let currentNodes = [];
 let currentEdges = [];
@@ -304,6 +419,7 @@ let currentMode = "gradient";
 // --- Controls ---
 const topnSlider = document.getElementById("topn-slider");
 const rankMode = document.getElementById("rank-mode");
+const maxDistSelect = document.getElementById("max-dist");
 const thresholdSlider = document.getElementById("threshold-slider");
 const chargeSlider = document.getElementById("charge-slider");
 const linkDistSlider = document.getElementById("link-dist-slider");
@@ -337,8 +453,11 @@ window.addEventListener("resize", () => {
 });
 
 // --- Event listeners ---
+const selectionModeSelect = document.getElementById("selection-mode");
+selectionModeSelect.addEventListener("change", () => { selectedNode = null; rebuildGraph(); });
 topnSlider.addEventListener("input", () => { selectedNode = null; rebuildGraph(); });
 rankMode.addEventListener("change", () => { selectedNode = null; rebuildGraph(); });
+maxDistSelect.addEventListener("change", () => { selectedNode = null; rebuildGraph(); });
 thresholdSlider.addEventListener("input", rebuildGraph);
 
 chargeSlider.addEventListener("input", function() {
@@ -369,13 +488,23 @@ opacitySlider.addEventListener("input", function() {
   });
 });
 
+function nodeScore(d) {
+  if (currentMode === "logit") return d.logitScore || 0;
+  if (currentMode === "frequency") return d.freq;
+  return d.gradScore;
+}
+
 // --- Main rebuild: recompute nodes/edges, restart simulation ---
 function rebuildGraph() {
+  const selectionMode = selectionModeSelect.value;
   const topN = +topnSlider.value;
   const mode = rankMode.value;
   currentMode = mode;
   const threshPct = +thresholdSlider.value;
-  const threshold = (threshPct / 100) * globalMaxAbs;
+  // Exponential mapping: slider 0-100 → threshold 0 to globalMaxAbs
+  // Using cube: fine control at low end, coarse at high end
+  const threshold = threshPct === 0 ? 0 : globalMaxAbs * Math.pow(threshPct / 100, 3);
+  const maxDist = +maxDistSelect.value;  // 0 = all
   const opacity = +opacitySlider.value / 100;
   const chargeStrength = +chargeSlider.value;
   const linkDist = +linkDistSlider.value;
@@ -384,13 +513,90 @@ function rebuildGraph() {
   document.getElementById("threshold-value").textContent = threshold.toFixed(4);
   document.getElementById("opacity-value").textContent = opacity.toFixed(2);
 
-  // Rank and select top N features globally
-  const sorted = [...allFeatures].sort((a, b) =>
-    mode === "gradient" ? b.gradScore - a.gradScore : b.freq - a.freq
-  );
-  const selected = sorted.slice(0, topN);
-  const selectedKeys = new Set(selected.map(f => f.key));
+  // Toggle visibility of top-N-only controls
+  document.getElementById("topn-group").style.display = selectionMode === "topn" ? "" : "none";
+  document.getElementById("rank-group").style.display = selectionMode === "topn" ? "" : "none";
 
+  let selected, selectedKeys;
+  const edges = [];
+  let globalMaxEdge = 0;
+  const hasLogit = DATA._logitNodes && DATA._logitNodes.length > 0;
+
+  if (selectionMode === "topn") {
+    // --- Top N mode: rank features, take top N, filter edges by threshold ---
+    const sorted = [...allFeatures].sort((a, b) => nodeScore(b) - nodeScore(a));
+    selected = sorted.slice(0, topN);
+    selectedKeys = new Set(selected.map(f => f.key));
+
+    DATA.layer_pairs.forEach(pair => {
+      if (maxDist > 0 && (pair.downstream_layer - pair.upstream_layer) > maxDist) return;
+      const mat = pair.gradient_matrix;
+      pair.upstream_feature_ids.forEach((uid, j) => {
+        const uKey = pair.upstream_layer + ":" + uid;
+        if (!selectedKeys.has(uKey)) return;
+        pair.downstream_feature_ids.forEach((did, i) => {
+          const dKey = pair.downstream_layer + ":" + did;
+          if (!selectedKeys.has(dKey)) return;
+          const val = mat[i][j];
+          if (Math.abs(val) >= threshold) {
+            edges.push({ uKey, dKey, uLayer: pair.upstream_layer, uId: uid,
+                          dLayer: pair.downstream_layer, dId: did, value: val });
+            if (Math.abs(val) > globalMaxEdge) globalMaxEdge = Math.abs(val);
+          }
+        });
+      });
+    });
+    if (hasLogit) {
+      DATA._logitEdges.forEach(e => {
+        if (!selectedKeys.has(e.uKey)) return;
+        if (Math.abs(e.value) >= threshold) {
+          edges.push(e);
+          if (Math.abs(e.value) > globalMaxEdge) globalMaxEdge = Math.abs(e.value);
+        }
+      });
+    }
+  } else {
+    // --- Edge threshold mode: find all edges above threshold, derive nodes ---
+    selectedKeys = new Set();
+
+    DATA.layer_pairs.forEach(pair => {
+      if (maxDist > 0 && (pair.downstream_layer - pair.upstream_layer) > maxDist) return;
+      const mat = pair.gradient_matrix;
+      pair.upstream_feature_ids.forEach((uid, j) => {
+        const uKey = pair.upstream_layer + ":" + uid;
+        pair.downstream_feature_ids.forEach((did, i) => {
+          const dKey = pair.downstream_layer + ":" + did;
+          const val = mat[i][j];
+          if (Math.abs(val) >= threshold) {
+            edges.push({ uKey, dKey, uLayer: pair.upstream_layer, uId: uid,
+                          dLayer: pair.downstream_layer, dId: did, value: val });
+            selectedKeys.add(uKey);
+            selectedKeys.add(dKey);
+            if (Math.abs(val) > globalMaxEdge) globalMaxEdge = Math.abs(val);
+          }
+        });
+      });
+    });
+    if (hasLogit) {
+      DATA._logitEdges.forEach(e => {
+        if (Math.abs(e.value) >= threshold) {
+          edges.push(e);
+          selectedKeys.add(e.uKey);
+          if (Math.abs(e.value) > globalMaxEdge) globalMaxEdge = Math.abs(e.value);
+        }
+      });
+    }
+    // Build selected feature list from edge endpoints
+    const featureByKey = {};
+    allFeatures.forEach(f => { featureByKey[f.key] = f; });
+    selected = [];
+    selectedKeys.forEach(key => {
+      if (featureByKey[key]) selected.push(featureByKey[key]);
+    });
+  }
+  currentEdges = edges;
+
+  // Build per-layer groupings from selected features
   const layerFeatures = {};
   selected.forEach(f => {
     if (!layerFeatures[f.layer]) layerFeatures[f.layer] = [];
@@ -399,28 +605,6 @@ function rebuildGraph() {
   const activeLayers = Object.keys(layerFeatures).map(Number).sort((a, b) => a - b);
   currentActiveLayers = activeLayers;
 
-  // Build edges
-  const edges = [];
-  let globalMaxEdge = 0;
-  DATA.layer_pairs.forEach(pair => {
-    const mat = pair.gradient_matrix;
-    pair.upstream_feature_ids.forEach((uid, j) => {
-      const uKey = pair.upstream_layer + ":" + uid;
-      if (!selectedKeys.has(uKey)) return;
-      pair.downstream_feature_ids.forEach((did, i) => {
-        const dKey = pair.downstream_layer + ":" + did;
-        if (!selectedKeys.has(dKey)) return;
-        const val = mat[i][j];
-        if (Math.abs(val) >= threshold) {
-          edges.push({ uKey, dKey, uLayer: pair.upstream_layer, uId: uid,
-                        dLayer: pair.downstream_layer, dId: did, value: val });
-          if (Math.abs(val) > globalMaxEdge) globalMaxEdge = Math.abs(val);
-        }
-      });
-    });
-  });
-  currentEdges = edges;
-
   // Stats
   const layerCounts = activeLayers.map(l => `L${l}:${layerFeatures[l].length}`).join(", ");
   document.getElementById("stats").innerHTML =
@@ -428,21 +612,25 @@ function rebuildGraph() {
     `<span class="sl">Visible edges:</span> <span class="sv">${edges.length}</span><br>` +
     `<span class="sl">Per layer:</span> <span style="color:#aaa;font-size:11px;">${layerCounts}</span>`;
 
-  // Compute fixed x positions per layer column
+  // Compute fixed x positions per layer column (+ logit column)
   const w = container.clientWidth;
   const h = container.clientHeight;
   const marginX = 60;
-  const colSpacing = activeLayers.length > 1
-    ? (w - 2 * marginX) / (activeLayers.length - 1)
+  const totalCols = activeLayers.length + (hasLogit ? 1 : 0);
+  const colSpacing = totalCols > 1
+    ? (w - 2 * marginX) / (totalCols - 1)
     : 0;
 
   layerXPositions = {};
   activeLayers.forEach((layerIdx, colIdx) => {
     layerXPositions[layerIdx] = marginX + colIdx * colSpacing;
   });
+  if (hasLogit) {
+    layerXPositions["logit"] = marginX + activeLayers.length * colSpacing;
+  }
 
   maxScore = selected.length > 0
-    ? Math.max(...selected.map(f => mode === "gradient" ? f.gradScore : f.freq))
+    ? Math.max(...selected.map(f => nodeScore(f)))
     : 1;
 
   // Build simulation node data — preserve positions if keys match
@@ -455,10 +643,26 @@ function rebuildGraph() {
     return {
       ...f,
       targetX,
-      x: old ? old.x : targetX + (Math.random() - 0.5) * 10,
+      fx: targetX,
+      x: targetX,
       y: old ? old.y : h / 2 + (Math.random() - 0.5) * h * 0.6,
     };
   });
+
+  // Add logit nodes (always visible, not subject to top-N)
+  if (hasLogit) {
+    const logitX = layerXPositions["logit"];
+    DATA._logitNodes.forEach((ln, idx) => {
+      const old = oldPosMap[ln.key];
+      currentNodes.push({
+        ...ln,
+        targetX: logitX,
+        fx: logitX,
+        x: logitX,
+        y: old ? old.y : h / 2 + (idx - (DATA._logitNodes.length - 1) / 2) * 60,
+      });
+    });
+  }
 
   // Build link data for d3-force (reference by index)
   const nodeIndex = {};
@@ -478,9 +682,11 @@ function rebuildGraph() {
   simulation = d3.forceSimulation(currentNodes)
     .force("link", d3.forceLink(links).distance(linkDist).strength(0.1))
     .force("charge", d3.forceManyBody().strength(chargeStrength))
-    .force("collide", d3.forceCollide().radius(d => 6 + 8 * ((mode === "gradient" ? d.gradScore : d.freq) / (maxScore || 1))))
-    .force("x", d3.forceX(d => d.targetX).strength(0.8))
-    .force("y", d3.forceY(h / 2).strength(0.02))
+    .force("collide", d3.forceCollide().radius(d => {
+      if (d.isLogitNode) return 16;
+      return 6 + 8 * (nodeScore(d) / (maxScore || 1));
+    }))
+    .force("y", d3.forceY(h / 2).strength(0.03))
     .alphaDecay(0.01)
     .on("tick", ticked);
 
@@ -498,6 +704,18 @@ function rebuildGraph() {
       .attr("text-anchor", "middle")
       .text(`L${layerIdx}`);
   });
+  if (hasLogit) {
+    const x = layerXPositions["logit"];
+    gLabels.append("line")
+      .attr("class", "layer-line")
+      .attr("x1", x).attr("x2", x)
+      .attr("y1", -2000).attr("y2", 4000);
+    gLabels.append("text")
+      .attr("class", "layer-label")
+      .attr("x", x).attr("y", 20)
+      .attr("text-anchor", "middle")
+      .text("Logit");
+  }
 
   // --- Draw edges ---
   const edgeSelection = gEdges.selectAll("line")
@@ -511,19 +729,27 @@ function rebuildGraph() {
     .attr("data-ukey", d => d.uKey)
     .attr("data-dkey", d => d.dKey)
     .on("mouseover", function(event, d) {
+      if (pinnedTooltip) return;
       tooltip.style.display = "block";
+      const toLabel = d.isLogitEdge
+        ? `Logit "${d.dLabel}"`
+        : `L${d.dLayer} #${d.dId}`;
       tooltip.innerHTML =
         `<span class="tl">From:</span> <span class="tv">L${d.uLayer} #${d.uId}</span><br>` +
-        `<span class="tl">To:</span> <span class="tv">L${d.dLayer} #${d.dId}</span><br>` +
+        `<span class="tl">To:</span> <span class="tv">${toLabel}</span><br>` +
         `<span class="tl">Gradient:</span> <span class="tv">${d.value.toFixed(6)}</span>`;
       tooltip.style.left = (event.clientX + 12) + "px";
       tooltip.style.top = (event.clientY - 10) + "px";
     })
     .on("mousemove", function(event) {
+      if (pinnedTooltip) return;
       tooltip.style.left = (event.clientX + 12) + "px";
       tooltip.style.top = (event.clientY - 10) + "px";
     })
-    .on("mouseout", () => { tooltip.style.display = "none"; });
+    .on("mouseout", () => {
+      if (pinnedTooltip) return;
+      tooltip.style.display = "none";
+    });
 
   // --- Draw nodes ---
   const nodeSelection = gNodes.selectAll("g.node")
@@ -534,29 +760,37 @@ function rebuildGraph() {
 
   nodeEnter.append("circle")
     .attr("r", d => {
-      const score = mode === "gradient" ? d.gradScore : d.freq;
-      return 4 + 6 * (score / (maxScore || 1));
+      if (d.isLogitNode) return 12;
+      return 4 + 6 * (nodeScore(d) / (maxScore || 1));
     })
     .attr("fill", d => {
+      if (d.isLogitNode) return "#e94560";
       const t = activeLayers.length > 1
         ? activeLayers.indexOf(d.layer) / (activeLayers.length - 1) : 0.5;
       return d3.interpolateRdYlBu(1 - t);
     });
 
   nodeEnter.append("text")
-    .attr("dy", d => -(6 + 6 * ((mode === "gradient" ? d.gradScore : d.freq) / (maxScore || 1))) - 2)
+    .attr("dy", d => {
+      if (d.isLogitNode) return -16;
+      return -(6 + 6 * (nodeScore(d) / (maxScore || 1))) - 2;
+    })
     .attr("text-anchor", "middle")
-    .text(d => d.id);
+    .attr("font-weight", d => d.isLogitNode ? "bold" : "normal")
+    .attr("font-size", d => d.isLogitNode ? "12px" : "9px")
+    .attr("fill", d => d.isLogitNode ? "#e94560" : "#ccc")
+    .text(d => d.isLogitNode ? d.label : d.id);
 
   const nodeMerge = nodeEnter.merge(nodeSelection);
 
   // Update circle sizes and colors on merge (for existing nodes that changed)
   nodeMerge.select("circle")
     .attr("r", d => {
-      const score = mode === "gradient" ? d.gradScore : d.freq;
-      return 4 + 6 * (score / (maxScore || 1));
+      if (d.isLogitNode) return 12;
+      return 4 + 6 * (nodeScore(d) / (maxScore || 1));
     })
     .attr("fill", d => {
+      if (d.isLogitNode) return "#e94560";
       const t = activeLayers.length > 1
         ? activeLayers.indexOf(d.layer) / (activeLayers.length - 1) : 0.5;
       return d3.interpolateRdYlBu(1 - t);
@@ -564,21 +798,63 @@ function rebuildGraph() {
 
   nodeMerge
     .on("mouseover", function(event, d) {
-      hoveredNodeKey = d.layer + ":" + d.id;
-      const cached = descCache[hoveredNodeKey];
+      if (pinnedTooltip) return;  // don't override pinned tooltip
       tooltip.style.display = "block";
-      tooltip.innerHTML = buildNodeTooltipHTML(d, cached);
+      if (d.isLogitNode) {
+        hoveredNodeKey = null;
+        tooltip.innerHTML =
+          `<span class="tl">Logit Node</span> <span class="tv">${d.label}</span><br>` +
+          `<span class="tl">Token ID:</span> <span class="tv">${d.id}</span><br>` +
+          `<span class="tl">Total |gradient|:</span> <span class="tv">${d.gradScore.toFixed(4)}</span>`;
+      } else {
+        hoveredNodeKey = d.layer + ":" + d.id;
+        const cached = descCache[hoveredNodeKey];
+        tooltip.innerHTML = buildNodeTooltipHTML(d, cached);
+        if (!(hoveredNodeKey in descCache)) fetchAndShowDescription(d);
+      }
       tooltip.style.left = (event.clientX + 12) + "px";
       tooltip.style.top = (event.clientY - 10) + "px";
-      // Fetch description if not yet cached
-      if (!(hoveredNodeKey in descCache)) fetchAndShowDescription(d);
     })
     .on("mousemove", function(event) {
+      if (pinnedTooltip) return;
       tooltip.style.left = (event.clientX + 12) + "px";
       tooltip.style.top = (event.clientY - 10) + "px";
     })
-    .on("mouseout", () => { hoveredNodeKey = null; tooltip.style.display = "none"; })
+    .on("mouseout", () => {
+      if (pinnedTooltip) return;  // keep pinned tooltip visible
+      hoveredNodeKey = null;
+      tooltip.style.display = "none";
+    })
+    .on("click", function(event, d) {
+      event.stopPropagation();
+      // Toggle pinned tooltip
+      if (pinnedTooltip === d.key) {
+        pinnedTooltip = null;
+        tooltip.style.display = "none";
+      } else {
+        pinnedTooltip = d.key;
+        // Show tooltip content for clicked node
+        if (d.isLogitNode) {
+          hoveredNodeKey = null;
+          tooltip.innerHTML =
+            `<span class="tl">Logit Node</span> <span class="tv">${d.label}</span><br>` +
+            `<span class="tl">Token ID:</span> <span class="tv">${d.id}</span><br>` +
+            `<span class="tl">Total |gradient|:</span> <span class="tv">${d.gradScore.toFixed(4)}</span>`;
+        } else {
+          hoveredNodeKey = d.layer + ":" + d.id;
+          const cached = descCache[hoveredNodeKey];
+          tooltip.innerHTML = buildNodeTooltipHTML(d, cached);
+          if (!(hoveredNodeKey in descCache)) fetchAndShowDescription(d);
+        }
+        tooltip.style.display = "block";
+        tooltip.style.left = (event.clientX + 12) + "px";
+        tooltip.style.top = (event.clientY - 10) + "px";
+      }
+      selectedNode = selectedNode === d.key ? null : d.key;
+      applySelection();
+    })
     .call(d3.drag()
+      .container(function() { return gRoot.node(); })
       .on("start", dragstarted)
       .on("drag", dragged)
       .on("end", dragended));
@@ -589,6 +865,9 @@ function rebuildGraph() {
 // --- Simulation tick: update positions ---
 function ticked() {
   const opacity = +opacitySlider.value / 100;
+
+  // x is pinned via fx on each node — no manual override needed
+
   // Build a quick lookup from key -> node for edge positioning
   const nodeMap = {};
   currentNodes.forEach(n => { nodeMap[n.key] = n; });
@@ -603,21 +882,21 @@ function ticked() {
     .attr("transform", d => `translate(${d.x},${d.y})`);
 }
 
-// --- Drag handlers (constrain x to layer column) ---
+// --- Drag handlers ---
 function dragstarted(event, d) {
   if (!event.active) simulation.alphaTarget(0.3).restart();
-  d.fx = d.targetX;  // lock x to layer column
+  d.fx = d.x;
   d.fy = d.y;
 }
 
 function dragged(event, d) {
-  d.fx = d.targetX;  // keep x pinned
-  d.fy = event.y;     // only allow vertical drag
+  d.fx = event.x;
+  d.fy = event.y;
 }
 
 function dragended(event, d) {
   if (!event.active) simulation.alphaTarget(0);
-  d.fx = null;
+  d.fx = d.targetX;  // snap x back to layer column
   d.fy = null;
 }
 
@@ -649,9 +928,485 @@ function applySelection() {
 svgEl.on("click", function(event) {
   if (event.target === svgEl.node()) {
     selectedNode = null;
+    pinnedTooltip = null;
+    tooltip.style.display = "none";
     applySelection();
   }
 });
+
+// ---------------------------------------------------------------------------
+// 3D Visualization
+// ---------------------------------------------------------------------------
+let viewMode = '2d';
+let scene3d, camera3d, renderer3d, controls3d;
+let node3dMeshes = [];
+let edge3dLines = [];
+let raycaster3d, mouse3d;
+let threeDInitialized = false;
+
+function init3D() {
+  if (threeDInitialized) return;
+  threeDInitialized = true;
+
+  const container3d = document.getElementById('graph-3d');
+  const w = container3d.clientWidth || container.clientWidth;
+  const h = container3d.clientHeight || container.clientHeight;
+
+  scene3d = new THREE.Scene();
+  scene3d.background = new THREE.Color(0x1a1a2e);
+
+  camera3d = new THREE.PerspectiveCamera(75, w / h, 0.1, 10000);
+  camera3d.position.set(0, 200, 800);
+
+  renderer3d = new THREE.WebGLRenderer({ antialias: true });
+  renderer3d.setSize(w, h);
+  container3d.appendChild(renderer3d.domElement);
+
+  const ambientLight = new THREE.AmbientLight(0x404040, 2);
+  scene3d.add(ambientLight);
+  const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+  dirLight.position.set(1, 1, 1);
+  scene3d.add(dirLight);
+
+  controls3d = new THREE.OrbitControls(camera3d, renderer3d.domElement);
+  controls3d.enableDamping = true;
+  controls3d.dampingFactor = 0.05;
+  controls3d.autoRotate = true;
+  controls3d.autoRotateSpeed = 0.5;
+
+  raycaster3d = new THREE.Raycaster();
+  mouse3d = new THREE.Vector2();
+
+  renderer3d.domElement.addEventListener('mousemove', function(event) {
+    const rect = renderer3d.domElement.getBoundingClientRect();
+    mouse3d.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse3d.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  });
+
+  renderer3d.domElement.addEventListener('click', function(event) {
+    raycaster3d.setFromCamera(mouse3d, camera3d);
+    const intersects = raycaster3d.intersectObjects(node3dMeshes);
+    if (intersects.length > 0) {
+      const d = intersects[0].object.userData.node;
+      // Toggle selection
+      selectedNode = selectedNode === d.key ? null : d.key;
+      pinnedTooltip = selectedNode ? d.key : null;
+      if (selectedNode) {
+        tooltip.style.display = "block";
+        if (d.isLogitNode) {
+          tooltip.innerHTML =
+            '<span class="tl">Logit Node</span> <span class="tv">' + d.label + '</span><br>' +
+            '<span class="tl">Token ID:</span> <span class="tv">' + d.id + '</span><br>' +
+            '<span class="tl">Total |gradient|:</span> <span class="tv">' + d.gradScore.toFixed(4) + '</span>';
+        } else {
+          hoveredNodeKey = d.layer + ":" + d.id;
+          const cached = descCache[hoveredNodeKey];
+          tooltip.innerHTML = buildNodeTooltipHTML(d, cached);
+          if (!(hoveredNodeKey in descCache)) fetchAndShowDescription(d);
+        }
+        tooltip.style.left = (event.clientX + 12) + "px";
+        tooltip.style.top = (event.clientY - 10) + "px";
+      } else {
+        tooltip.style.display = "none";
+      }
+      update3DHighlighting();
+    } else {
+      selectedNode = null;
+      pinnedTooltip = null;
+      tooltip.style.display = "none";
+      update3DHighlighting();
+    }
+  });
+
+  animate3D();
+
+  window.addEventListener("resize", function() {
+    if (viewMode !== '3d') return;
+    const w2 = container.clientWidth;
+    const h2 = container.clientHeight;
+    camera3d.aspect = w2 / h2;
+    camera3d.updateProjectionMatrix();
+    renderer3d.setSize(w2, h2);
+  });
+}
+
+function animate3D() {
+  requestAnimationFrame(animate3D);
+  if (viewMode === '3d' && controls3d) {
+    controls3d.update();
+    renderer3d.render(scene3d, camera3d);
+  }
+}
+
+function rebuild3DGraph() {
+  if (!threeDInitialized) return;
+
+  // Clear old meshes/lines
+  node3dMeshes.forEach(m => scene3d.remove(m));
+  edge3dLines.forEach(l => scene3d.remove(l));
+  node3dMeshes = [];
+  edge3dLines = [];
+  const topN = +topnSlider.value;
+  const mode = rankMode.value;
+  currentMode = mode;
+  const threshPct = +thresholdSlider.value;
+  const threshold3d = threshPct === 0 ? 0 : globalMaxAbs * Math.pow(threshPct / 100, 3);
+  const maxDist = +maxDistSelect.value;
+
+  // Select features (same logic as 2D)
+  const sorted = [...allFeatures].sort((a, b) => nodeScore(b) - nodeScore(a));
+  const selected = sorted.slice(0, topN);
+  const selectedKeys = new Set(selected.map(f => f.key));
+
+  const layerFeatures = {};
+  selected.forEach(f => {
+    if (!layerFeatures[f.layer]) layerFeatures[f.layer] = [];
+    layerFeatures[f.layer].push(f);
+  });
+  const activeLayers = Object.keys(layerFeatures).map(Number).sort((a, b) => a - b);
+  const ms = selected.length > 0 ? Math.max(...selected.map(f => nodeScore(f))) : 1;
+
+  // Build edges
+  const edges3d = [];
+  const hasLogit = DATA._logitNodes && DATA._logitNodes.length > 0;
+  DATA.layer_pairs.forEach(pair => {
+    if (maxDist > 0 && (pair.downstream_layer - pair.upstream_layer) > maxDist) return;
+    const mat = pair.gradient_matrix;
+    pair.upstream_feature_ids.forEach((uid, j) => {
+      const uKey = pair.upstream_layer + ":" + uid;
+      if (!selectedKeys.has(uKey)) return;
+      pair.downstream_feature_ids.forEach((did, i) => {
+        const dKey = pair.downstream_layer + ":" + did;
+        if (!selectedKeys.has(dKey)) return;
+        const val = mat[i][j];
+        if (Math.abs(val) >= threshold3d) {
+          edges3d.push({ source: uKey, target: dKey, value: val });
+        }
+      });
+    });
+  });
+  if (hasLogit) {
+    DATA._logitEdges.forEach(e => {
+      if (!selectedKeys.has(e.uKey)) return;
+      if (Math.abs(e.value) >= threshold3d) {
+        edges3d.push({ source: e.uKey, target: e.dKey, value: e.value, isLogitEdge: true });
+      }
+    });
+  }
+
+  // Create node data — initial random Y/Z, fixed X per layer
+  const layerSpacing = 60;
+  const nodeData = [];
+  selected.forEach(f => {
+    nodeData.push({
+      key: f.key, layer: f.layer, id: f.id,
+      gradScore: f.gradScore, freq: f.freq, logitScore: f.logitScore || 0,
+      isLogitNode: false,
+      px: (activeLayers.indexOf(f.layer) - (activeLayers.length - 1) / 2) * layerSpacing,
+      py: (Math.random() - 0.5) * 100,
+      pz: (Math.random() - 0.5) * 100,
+    });
+  });
+
+  if (hasLogit) {
+    DATA._logitNodes.forEach((ln, idx) => {
+      if (!selectedKeys.has(ln.key)) selectedKeys.add(ln.key);
+      nodeData.push({
+        key: ln.key, layer: "logit", id: ln.id, label: ln.label,
+        gradScore: ln.gradScore, freq: 0, logitScore: 0,
+        isLogitNode: true,
+        px: ((activeLayers.length) - (activeLayers.length - 1) / 2) * layerSpacing,
+        py: (idx - (DATA._logitNodes.length - 1) / 2) * 20,
+        pz: 0,
+      });
+    });
+  }
+
+  // Simple 3D repulsion simulation (Y/Z only, X stays fixed per layer)
+  // Run synchronously — fast enough for ~30-200 nodes
+  const repStrength = 500;
+  const minDist = 5;
+  for (let iter = 0; iter < 200; iter++) {
+    for (let i = 0; i < nodeData.length; i++) {
+      const a = nodeData[i];
+      if (a.isLogitNode) continue;
+      let fy = 0, fz = 0;
+      for (let j = 0; j < nodeData.length; j++) {
+        if (i === j) continue;
+        const b = nodeData[j];
+        const dy = a.py - b.py;
+        const dz = a.pz - b.pz;
+        const dx = a.px - b.px;
+        const dist2 = dx * dx + dy * dy + dz * dz;
+        const dist = Math.sqrt(dist2) || minDist;
+        // Repulsion — stronger for same-layer nodes
+        const strength = a.layer === b.layer ? repStrength : repStrength * 0.3;
+        const f = strength / (dist2 || minDist * minDist);
+        fy += (dy / dist) * f;
+        fz += (dz / dist) * f;
+      }
+      // Weak centering to prevent drift
+      fy -= a.py * 0.01;
+      fz -= a.pz * 0.01;
+      a.py += fy * 0.5;
+      a.pz += fz * 0.5;
+    }
+  }
+  const nodeMap3d = {};
+  nodeData.forEach((n, i) => { nodeMap3d[n.key] = i; });
+
+  // Create Three.js node meshes at their positions
+  nodeData.forEach(n => {
+    const r = n.isLogitNode ? 6 : 2 + 4 * (nodeScore(n) / (ms || 1));
+    const geometry = new THREE.SphereGeometry(r, 16, 16);
+    let color;
+    if (n.isLogitNode) {
+      color = new THREE.Color(0xe94560);
+    } else {
+      const t = activeLayers.length > 1
+        ? activeLayers.indexOf(n.layer) / (activeLayers.length - 1) : 0.5;
+      color = new THREE.Color(d3.interpolateRdYlBu(1 - t));
+    }
+    const material = new THREE.MeshPhongMaterial({
+      color: color,
+      emissive: new THREE.Color(0x000000),
+      emissiveIntensity: 0,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(n.px, n.py, n.pz);
+    mesh.userData.node = n;
+    scene3d.add(mesh);
+    node3dMeshes.push(mesh);
+  });
+
+  // Create Three.js edge lines
+  edges3d.forEach(e => {
+    const si = nodeMap3d[e.source];
+    const ti = nodeMap3d[e.target];
+    if (si === undefined || ti === undefined) return;
+    const s = nodeData[si];
+    const t = nodeData[ti];
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array([s.px, s.py, s.pz, t.px, t.py, t.pz]);
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const edgeColor = e.value >= 0 ? 0x4dabf7 : 0xff6b6b;
+    const material = new THREE.LineBasicMaterial({
+      color: edgeColor,
+      opacity: 0.3,
+      transparent: true,
+    });
+    const line = new THREE.Line(geometry, material);
+    line.userData.link = e;
+    scene3d.add(line);
+    edge3dLines.push(line);
+  });
+
+  update3DHighlighting();
+}
+
+function update3DHighlighting() {
+  const connectedKeys = new Set();
+  if (selectedNode) {
+    connectedKeys.add(selectedNode);
+    edge3dLines.forEach(l => {
+      const link = l.userData.link;
+      const sKey = link.source.key || link.source;
+      const tKey = link.target.key || link.target;
+      if (sKey === selectedNode || tKey === selectedNode) {
+        connectedKeys.add(sKey);
+        connectedKeys.add(tKey);
+      }
+    });
+  }
+
+  node3dMeshes.forEach(mesh => {
+    const n = mesh.userData.node;
+    if (!selectedNode) {
+      mesh.material.opacity = 1;
+      mesh.material.transparent = false;
+      mesh.material.emissiveIntensity = 0;
+      mesh.scale.set(1, 1, 1);
+    } else if (n.key === selectedNode) {
+      mesh.material.emissive = new THREE.Color(0xff4444);
+      mesh.material.emissiveIntensity = 0.6;
+      mesh.scale.set(1.5, 1.5, 1.5);
+      mesh.material.opacity = 1;
+      mesh.material.transparent = false;
+    } else if (connectedKeys.has(n.key)) {
+      mesh.material.emissive = new THREE.Color(0xffa500);
+      mesh.material.emissiveIntensity = 0.3;
+      mesh.scale.set(1.2, 1.2, 1.2);
+      mesh.material.opacity = 1;
+      mesh.material.transparent = false;
+    } else {
+      mesh.material.emissive = new THREE.Color(0x000000);
+      mesh.material.emissiveIntensity = 0;
+      mesh.material.opacity = 0.15;
+      mesh.material.transparent = true;
+      mesh.scale.set(0.7, 0.7, 0.7);
+    }
+  });
+
+  edge3dLines.forEach(l => {
+    const link = l.userData.link;
+    const sKey = link.source.key || link.source;
+    const tKey = link.target.key || link.target;
+    if (!selectedNode) {
+      l.material.opacity = 0.4;
+    } else if (sKey === selectedNode || tKey === selectedNode) {
+      l.material.opacity = 0.8;
+    } else {
+      l.material.opacity = 0.03;
+    }
+  });
+}
+
+// Toggle 2D/3D
+document.getElementById('view-mode-btn').addEventListener('click', function() {
+  if (viewMode === '2d') {
+    viewMode = '3d';
+    this.textContent = 'Switch to 2D View';
+    document.getElementById('graph').style.display = 'none';
+    document.getElementById('graph-3d').style.display = 'block';
+    init3D();
+    rebuild3DGraph();
+  } else {
+    viewMode = '2d';
+    this.textContent = 'Switch to 3D View';
+    document.getElementById('graph').style.display = 'block';
+    document.getElementById('graph-3d').style.display = 'none';
+    selectedNode = null;
+    pinnedTooltip = null;
+    tooltip.style.display = "none";
+    rebuildGraph();
+  }
+});
+
+// Hook controls to also rebuild 3D when changed
+const orig_rebuildGraph = rebuildGraph;
+rebuildGraph = function() {
+  orig_rebuildGraph();
+  if (viewMode === '3d') rebuild3DGraph();
+};
+
+// --- Export graph JSON for LLM ---
+document.getElementById("export-graph-btn").addEventListener("click", exportGraphJSON);
+
+async function exportGraphJSON() {
+  const btn = document.getElementById("export-graph-btn");
+  const progressEl = document.getElementById("export-progress");
+  btn.disabled = true;
+  btn.style.opacity = "0.5";
+  progressEl.style.display = "block";
+  progressEl.textContent = "Collecting nodes...";
+
+  // Collect visible nodes and edges
+  const featureNodes = currentNodes.filter(n => !n.isLogitNode);
+  const logitNodesVisible = currentNodes.filter(n => n.isLogitNode);
+
+  // Fetch descriptions for nodes on supported layers (skip already cached)
+  const toFetch = featureNodes.filter(n =>
+    npHasLayer(n.layer) && !((n.layer + ":" + n.id) in descCache)
+  );
+
+  if (toFetch.length > 0) {
+    for (let i = 0; i < toFetch.length; i++) {
+      const n = toFetch[i];
+      const key = n.layer + ":" + n.id;
+      progressEl.textContent = `Fetching descriptions... ${i + 1}/${toFetch.length}`;
+      try {
+        const url = npApiUrl(n.layer, n.id);
+        const resp = await fetch(url);
+        if (resp.ok) {
+          const data = await resp.json();
+          descCache[key] = (data && data.explanations && data.explanations.length > 0)
+            ? (data.explanations[0].description || null) : null;
+        } else {
+          descCache[key] = null;
+        }
+      } catch (e) {
+        descCache[key] = null;
+      }
+      // Small delay to avoid rate limiting
+      if (i < toFetch.length - 1) await new Promise(r => setTimeout(r, 50));
+    }
+  }
+
+  progressEl.textContent = "Building export...";
+
+  // Build nodes grouped by layer
+  const nodesByLayer = {};
+  featureNodes.forEach(n => {
+    const lk = "L" + n.layer;
+    if (!nodesByLayer[lk]) nodesByLayer[lk] = [];
+    const key = n.layer + ":" + n.id;
+    const entry = { id: n.id };
+    if (descCache[key]) entry.desc = descCache[key];
+    entry.score = +nodeScore(n).toFixed(4);
+    nodesByLayer[lk].push(entry);
+  });
+  // Sort each layer's features by score descending
+  Object.values(nodesByLayer).forEach(arr => arr.sort((a, b) => b.score - a.score));
+
+  if (logitNodesVisible.length > 0) {
+    nodesByLayer["Logit"] = logitNodesVisible.map(n => ({
+      token: n.label,
+      token_id: n.id,
+      total_grad: +n.gradScore.toFixed(4),
+    }));
+  }
+
+  // Build edges sorted by |gradient| descending
+  const edges = currentEdges.map(e => ({
+    src: "L" + e.uLayer + ":" + e.uId,
+    dst: e.isLogitEdge ? ("Logit:" + e.dLabel) : ("L" + e.dLayer + ":" + e.dId),
+    grad: +e.value.toFixed(4),
+  }));
+  edges.sort((a, b) => Math.abs(b.grad) - Math.abs(a.grad));
+
+  // Build context paragraph for LLM interpretation
+  const layerList = Object.keys(nodesByLayer).filter(k => k !== "Logit").sort((a, b) => parseInt(a.slice(1)) - parseInt(b.slice(1)));
+  const npLayerNote = npConfig
+    ? (npConfig.layers ? " Neuronpedia auto-interp descriptions are only available for layers " + [...npConfig.layers].join(", ") + "; other layers lack descriptions." : "")
+    : " Neuronpedia descriptions are not available for this model.";
+
+  const context = "This is a feature circuit extracted from the transformer language model " + (DATA.metadata.model || "unknown") + ". "
+    + "Each node represents a feature learned by a Sparse Autoencoder (SAE) trained on the model's residual stream at a specific layer. "
+    + "SAE features are interpretable directions in activation space; their 'desc' field (when available) is an auto-generated natural language description of what inputs cause that feature to activate. "
+    + "Each edge represents the gradient of a downstream SAE feature's activation with respect to an upstream SAE feature's activation, computed across the prompts listed in metadata. "
+    + "A positive gradient (excitatory) means increasing the upstream feature's activation tends to increase the downstream feature's activation; a negative gradient (inhibitory) means the opposite. "
+    + "Larger absolute gradient values indicate stronger functional connections. "
+    + "The 'score' on each node is the ranking metric used to select which features to display (total gradient influence, logit gradient, or activation frequency depending on the mode)."
+    + "\n\n"
+    + "The prompts used to compute this circuit are listed in metadata.prompts. "
+    + "Features that are consistently active across these prompts and strongly connected to each other likely form a functional circuit relevant to the shared task structure of those prompts. "
+    + "Logit nodes (if present) represent specific output tokens; edges to logit nodes show how strongly each feature influences the probability of that token being predicted."
+    + npLayerNote;
+
+  const exportData = {
+    metadata: DATA.metadata,
+    context: context,
+    nodes_by_layer: nodesByLayer,
+    edges: edges,
+  };
+
+  // Trigger download
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
+  const dlUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = dlUrl;
+  const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "_");
+  a.download = "circuit_export_" + ts + ".json";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(dlUrl);
+
+  progressEl.textContent = "Done!";
+  btn.disabled = false;
+  btn.style.opacity = "1";
+  setTimeout(() => { progressEl.style.display = "none"; }, 2000);
+}
 
 // Initial load
 initData(DATA);

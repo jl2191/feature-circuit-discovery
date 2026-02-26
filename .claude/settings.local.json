@@ -28,7 +28,16 @@
       "Bash(pip index:*)",
       "Bash(.venv/bin/pip install:*)",
       "Bash(chmod:*)",
-      "Bash(poetry env use:*)"
+      "Bash(poetry env use:*)",
+      "Bash(grep:*)",
+      "Bash(for layer in 0 1 5 12 20 25)",
+      "Bash(do echo '=== layer_$layer ===')",
+      "Bash(done)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(PYTHONPATH=/Users/hannes/Desktop/feature-circuit-discovery .venv/bin/python:*)",
+      "Bash(kill:*)",
+      "Bash(vm_stat:*)",
+      "Bash(PYTHONPATH=. .venv/bin/python:*)"
     ]
   }
 }

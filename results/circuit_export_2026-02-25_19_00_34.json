@@ -1,0 +1,1628 @@
+{
+  "metadata": {
+    "model": "google/gemma-2-2b",
+    "sae_repo": "google/gemma-scope-2b-pt-res",
+    "sae_width": 16384,
+    "timestamp": "2026-02-25T19:58:26.312443",
+    "prompts": [
+      "Friends Juana and Kristi found a mango at the bar. Kristi gave it to",
+      "Yvette and Angie were working at the mountain. Yvette decided to give a banana to",
+      "After Doris and Marsha went to the mountain, Marsha gave a strawberry to",
+      "While Bernadette and Harriet were commuting to the desert, Bernadette gave a watermelon to",
+      "Afterwards, Ginger and Bernadette went to the library. Bernadette gave a mango to",
+      "Faye and Rosa had a lot of fun at the theater. Faye gave a blackberry to",
+      "Afterwards, David and Estelle went to the zoo. Estelle gave a mango to",
+      "After the lunch, Martha and Theresa went to the river. Martha gave a mango to",
+      "While Sarah and Teresa were commuting to the park, Teresa gave a orange to",
+      "Friends Kristi and Chelsea found a papaya at the shop. Kristi gave it to",
+      "When David and Carol got a raspberry at the theater, Carol decided to give the raspberry to",
+      "Afterwards, Suzanne and Lorraine went to the forest. Suzanne gave a raspberry to",
+      "After Janet and Lee went to the lake, Lee gave a honeydew to",
+      "Agnes and Virginia were thinking about going to the theater. Agnes wanted to give a apple to",
+      "Afterwards, Mattie and Stacey went to the library. Stacey gave a strawberry to",
+      "When Ethel and Deanna got a pineapple at the cave, Ethel decided to give it to",
+      "Deanna and Eleanor were thinking about going to the home. Eleanor wanted to give a watermelon to",
+      "While Suzanne and Stacy were working at the beach, Suzanne gave a apple to",
+      "Amanda and Lee had a lot of fun at the zoo. Lee gave a blueberry to",
+      "When Rebecca and Amanda got a kiwi at the library, Rebecca decided to give the kiwi to",
+      "When Loretta and Shannon got a strawberry at the mountain, Shannon decided to give the strawberry to",
+      "While Sonia and Brandy were commuting to the desert, Sonia gave a raspberry to",
+      "After Leona and Kelly went to the home, Kelly gave a banana to",
+      "Stacey and David were thinking about going to the store. Stacey wanted to give a kiwi to",
+      "After the lunch, Virginia and Geneva went to the lake. Geneva gave a pear to",
+      "Friends Kristi and Juana found a mango at the bar. Juana gave it to",
+      "Angie and Yvette were working at the mountain. Angie decided to give a banana to",
+      "After Marsha and Doris went to the mountain, Doris gave a strawberry to",
+      "While Harriet and Bernadette were commuting to the desert, Harriet gave a watermelon to",
+      "Afterwards, Bernadette and Ginger went to the library. Ginger gave a mango to",
+      "Rosa and Faye had a lot of fun at the theater. Rosa gave a blackberry to",
+      "Afterwards, Estelle and David went to the zoo. David gave a mango to",
+      "After the lunch, Theresa and Martha went to the river. Theresa gave a mango to",
+      "While Teresa and Sarah were commuting to the park, Sarah gave a orange to",
+      "Friends Chelsea and Kristi found a papaya at the shop. Chelsea gave it to",
+      "When Carol and David got a raspberry at the theater, David decided to give the raspberry to",
+      "Afterwards, Lorraine and Suzanne went to the forest. Lorraine gave a raspberry to",
+      "After Lee and Janet went to the lake, Janet gave a honeydew to",
+      "Virginia and Agnes were thinking about going to the theater. Virginia wanted to give a apple to",
+      "Afterwards, Stacey and Mattie went to the library. Mattie gave a strawberry to",
+      "When Deanna and Ethel got a pineapple at the cave, Deanna decided to give it to",
+      "Eleanor and Deanna were thinking about going to the home. Deanna wanted to give a watermelon to",
+      "While Stacy and Suzanne were working at the beach, Stacy gave a apple to",
+      "Lee and Amanda had a lot of fun at the zoo. Amanda gave a blueberry to",
+      "When Amanda and Rebecca got a kiwi at the library, Amanda decided to give the kiwi to",
+      "When Shannon and Loretta got a strawberry at the mountain, Loretta decided to give the strawberry to",
+      "While Brandy and Sonia were commuting to the desert, Brandy gave a raspberry to",
+      "After Kelly and Leona went to the home, Leona gave a banana to",
+      "David and Stacey were thinking about going to the store. David wanted to give a kiwi to",
+      "After the lunch, Geneva and Virginia went to the lake. Virginia gave a pear to"
+    ],
+    "activation_threshold": 0.9,
+    "device": "mps",
+    "dtype": "bfloat16"
+  },
+  "context": "This is a feature circuit extracted from the transformer language model google/gemma-2-2b. Each node represents a feature learned by a Sparse Autoencoder (SAE) trained on the model's residual stream at a specific layer. SAE features are interpretable directions in activation space; their 'desc' field (when available) is an auto-generated natural language description of what inputs cause that feature to activate. Each edge represents the gradient of a downstream SAE feature's activation with respect to an upstream SAE feature's activation, computed across the prompts listed in metadata. A positive gradient (excitatory) means increasing the upstream feature's activation tends to increase the downstream feature's activation; a negative gradient (inhibitory) means the opposite. Larger absolute gradient values indicate stronger functional connections. The 'score' on each node is the ranking metric used to select which features to display (total gradient influence, logit gradient, or activation frequency depending on the mode).\n\nThe prompts used to compute this circuit are listed in metadata.prompts. Features that are consistently active across these prompts and strongly connected to each other likely form a functional circuit relevant to the shared task structure of those prompts. Logit nodes (if present) represent specific output tokens; edges to logit nodes show how strongly each feature influences the probability of that token being predicted.",
+  "nodes_by_layer": {
+    "L21": [
+      {
+        "id": 4138,
+        "desc": "technical or programming terms and references across various contexts",
+        "score": 147.9155
+      },
+      {
+        "id": 5400,
+        "desc": "terms related to financial transactions and legal documentation",
+        "score": 77.0803
+      },
+      {
+        "id": 9999,
+        "desc": "phrases related to service quality and customer interactions",
+        "score": 47.7775
+      },
+      {
+        "id": 10807,
+        "desc": " mathematical constructs and notation in equations or algorithms",
+        "score": 46.7662
+      },
+      {
+        "id": 12441,
+        "desc": "phrases related to legal proceedings and claims",
+        "score": 42.5891
+      },
+      {
+        "id": 5639,
+        "desc": "references to close relationships and friendships",
+        "score": 38.6369
+      },
+      {
+        "id": 13174,
+        "desc": "elements related to legal discussions and case evaluations",
+        "score": 36.745
+      }
+    ],
+    "L22": [
+      {
+        "id": 15056,
+        "desc": "certain key terms and phrases related to various subjects such as programming, medicine, and science",
+        "score": 130.2496
+      },
+      {
+        "id": 10566,
+        "desc": "specific words and phrases related to arguments, reasoning, and the presentation of evidence in a legal or analytical context",
+        "score": 46.2087
+      },
+      {
+        "id": 3497,
+        "desc": "references to personal health and medical conditions",
+        "score": 41.4545
+      },
+      {
+        "id": 14231,
+        "desc": "mathematical symbols and expressions involving equations or inequalities",
+        "score": 37.2523
+      },
+      {
+        "id": 5286,
+        "desc": "phrases related to personal connections and requests for assistance",
+        "score": 36.4546
+      }
+    ],
+    "L24": [
+      {
+        "id": 261,
+        "desc": "technical terms related to software or programming concepts",
+        "score": 119.638
+      },
+      {
+        "id": 4680,
+        "desc": "terms related to computer games and player interactions",
+        "score": 116.6895
+      },
+      {
+        "id": 14870,
+        "desc": "content related to healthcare policies and practices",
+        "score": 89.5408
+      },
+      {
+        "id": 3848,
+        "desc": "terms related to scientific and medical topics",
+        "score": 88.0826
+      },
+      {
+        "id": 8662,
+        "desc": "references to interpersonal relationships and partnerships",
+        "score": 75.8514
+      },
+      {
+        "id": 12367,
+        "desc": "key actions and movements related to combat or physical sports",
+        "score": 48.5915
+      },
+      {
+        "id": 1860,
+        "desc": "elements related to announcements and signaling events",
+        "score": 46.9193
+      },
+      {
+        "id": 9589,
+        "desc": "mathematical or technical terminology related to analysis and derivatives",
+        "score": 36.7677
+      }
+    ],
+    "L23": [
+      {
+        "id": 6961,
+        "desc": "technical terms and specific concepts related to mathematical distributions and statistics",
+        "score": 114.2399
+      },
+      {
+        "id": 1500,
+        "desc": " references to influential historical or philosophical figures and concepts",
+        "score": 73.3263
+      },
+      {
+        "id": 5205,
+        "desc": "emotional expressions or sentiments related to achievement and recognition",
+        "score": 43.5224
+      },
+      {
+        "id": 4121,
+        "desc": " expressions involving mathematical symbols and notations",
+        "score": 39.0931
+      },
+      {
+        "id": 5286,
+        "desc": "technical instructions and guidance regarding programming or system usage",
+        "score": 37.6088
+      }
+    ],
+    "L20": [
+      {
+        "id": 6631,
+        "desc": "proper nouns.\n",
+        "score": 99.4547
+      },
+      {
+        "id": 15889,
+        "desc": " mathematical symbols and functions related to equations",
+        "score": 38.8112
+      },
+      {
+        "id": 12545,
+        "desc": "narratives involving characters facing challenges and making deals related to supernatural elements",
+        "score": 37.2516
+      },
+      {
+        "id": 9768,
+        "desc": "terms related to control and authority, particularly in political or systemic contexts",
+        "score": 36.8046
+      },
+      {
+        "id": 6370,
+        "desc": "mentions of gratitude towards individuals and acknowledgments in a formal context",
+        "score": 35.7089
+      }
+    ],
+    "L16": [
+      {
+        "id": 16028,
+        "desc": "references to biological and chemical terms in scientific contexts",
+        "score": 76.1757
+      }
+    ],
+    "L17": [
+      {
+        "id": 7127,
+        "desc": " the beginning of new sections or topics in a text",
+        "score": 69.2769
+      }
+    ],
+    "L15": [
+      {
+        "id": 10716,
+        "desc": "specific structural elements and formatting in textual data",
+        "score": 66.18
+      },
+      {
+        "id": 1695,
+        "desc": "phrases related to accountability and responsibility in professional or organizational contexts",
+        "score": 37.7043
+      }
+    ],
+    "L25": [
+      {
+        "id": 3017,
+        "desc": "financial report figures, including revenue, guidance, and detailed numerical metrics",
+        "score": 64.7068
+      },
+      {
+        "id": 10150,
+        "desc": "terms related to the performance or description of artistic or cultural expressions",
+        "score": 63.1044
+      },
+      {
+        "id": 5755,
+        "desc": " names of individuals and references to authors",
+        "score": 61.0442
+      },
+      {
+        "id": 12908,
+        "desc": "commands related to identity and credential management in a coding or command context",
+        "score": 54.7335
+      },
+      {
+        "id": 14325,
+        "desc": " numerical data and statistics related to incidents or events",
+        "score": 45.7903
+      },
+      {
+        "id": 8456,
+        "desc": "mentions of specific individuals and their contributions or roles",
+        "score": 43.2749
+      },
+      {
+        "id": 1689,
+        "desc": "HTML and XML tags, particularly those related to metadata and attributes",
+        "score": 42.0245
+      }
+    ],
+    "L14": [
+      {
+        "id": 15567,
+        "desc": "the presence of conversational markers or discourse elements",
+        "score": 59.6583
+      }
+    ],
+    "L18": [
+      {
+        "id": 8578,
+        "desc": "HTML/XML-like tags and structure within the text",
+        "score": 57.4556
+      },
+      {
+        "id": 9392,
+        "desc": "keywords and terms related to data structures and programming concepts",
+        "score": 36.4453
+      },
+      {
+        "id": 14807,
+        "desc": "references to legal or formal documents and titles",
+        "score": 35.8474
+      }
+    ],
+    "L13": [
+      {
+        "id": 11248,
+        "desc": " tokens and symbols related to data and mathematical expressions",
+        "score": 56.5363
+      },
+      {
+        "id": 15177,
+        "desc": " relationships and interactions between entities or parts within a system",
+        "score": 42.3706
+      }
+    ],
+    "L12": [
+      {
+        "id": 1041,
+        "desc": "technical terms and concepts related to programming or data structures",
+        "score": 53.5852
+      }
+    ],
+    "L11": [
+      {
+        "id": 12945,
+        "desc": "specific references to medical and scientific terminology, particularly related to health conditions and research concepts",
+        "score": 50.9714
+      }
+    ],
+    "L19": [
+      {
+        "id": 10678,
+        "desc": "infinitive forms of the verb \"to\" along with other grammatical variations and related expressions",
+        "score": 49.2407
+      },
+      {
+        "id": 13584,
+        "desc": "elements of programming syntax and structure in code snippets",
+        "score": 45.9832
+      },
+      {
+        "id": 13226,
+        "desc": "references to individuals and their affiliations in academia or research contexts",
+        "score": 42.3015
+      },
+      {
+        "id": 422,
+        "desc": " specific syntactical structures or patterns in code-like text",
+        "score": 37.7629
+      },
+      {
+        "id": 3019,
+        "desc": "content related to regulatory compliance and procedural guidelines",
+        "score": 35.7827
+      }
+    ],
+    "L7": [
+      {
+        "id": 12287,
+        "desc": "specific nouns and related actions or concepts within a variety of contexts",
+        "score": 49.0775
+      }
+    ],
+    "L10": [
+      {
+        "id": 4392,
+        "desc": " words related to magic or illusion",
+        "score": 48.4925
+      }
+    ],
+    "L9": [
+      {
+        "id": 12102,
+        "desc": "structural elements and syntax within code or technical documentation",
+        "score": 47.5049
+      }
+    ],
+    "L8": [
+      {
+        "id": 9213,
+        "desc": "specific terms related to structure, classification, and elements in a scientific or technical context",
+        "score": 46.0173
+      }
+    ],
+    "Logit": [
+      {
+        "token": " Juana (IO)",
+        "token_id": 159359,
+        "total_grad": 3.4082
+      },
+      {
+        "token": " Kristi (S)",
+        "token_id": 107585,
+        "total_grad": 17.9557
+      }
+    ]
+  },
+  "edges": [
+    {
+      "src": "L20:15889",
+      "dst": "L21:10807",
+      "grad": 1.2444
+    },
+    {
+      "src": "L20:6631",
+      "dst": "L21:4138",
+      "grad": 1.1337
+    },
+    {
+      "src": "L22:3497",
+      "dst": "L23:5205",
+      "grad": 0.9765
+    },
+    {
+      "src": "L22:5286",
+      "dst": "L23:5286",
+      "grad": 0.9666
+    },
+    {
+      "src": "L22:14231",
+      "dst": "L23:4121",
+      "grad": 0.9433
+    },
+    {
+      "src": "L23:1500",
+      "dst": "L24:8662",
+      "grad": 0.9236
+    },
+    {
+      "src": "L19:3019",
+      "dst": "L20:9768",
+      "grad": 0.9218
+    },
+    {
+      "src": "L20:9768",
+      "dst": "L21:13174",
+      "grad": 0.9172
+    },
+    {
+      "src": "L18:14807",
+      "dst": "L19:13226",
+      "grad": 0.9015
+    },
+    {
+      "src": "L18:9392",
+      "dst": "L19:3019",
+      "grad": 0.9011
+    },
+    {
+      "src": "L21:13174",
+      "dst": "L22:5286",
+      "grad": 0.9011
+    },
+    {
+      "src": "L19:422",
+      "dst": "L20:15889",
+      "grad": 0.8852
+    },
+    {
+      "src": "L22:15056",
+      "dst": "L23:6961",
+      "grad": 0.8751
+    },
+    {
+      "src": "L21:4138",
+      "dst": "L22:15056",
+      "grad": 0.8454
+    },
+    {
+      "src": "L23:5286",
+      "dst": "L24:9589",
+      "grad": 0.8454
+    },
+    {
+      "src": "L23:6961",
+      "dst": "L24:261",
+      "grad": 0.7156
+    },
+    {
+      "src": "L23:1500",
+      "dst": "L24:4680",
+      "grad": 0.6964
+    },
+    {
+      "src": "L18:8578",
+      "dst": "L19:13584",
+      "grad": 0.677
+    },
+    {
+      "src": "L21:12441",
+      "dst": "L22:10566",
+      "grad": 0.6543
+    },
+    {
+      "src": "L24:14870",
+      "dst": "L25:3017",
+      "grad": 0.6541
+    },
+    {
+      "src": "L16:16028",
+      "dst": "L17:7127",
+      "grad": 0.6426
+    },
+    {
+      "src": "L22:10566",
+      "dst": "L23:1500",
+      "grad": 0.6304
+    },
+    {
+      "src": "L14:15567",
+      "dst": "L15:10716",
+      "grad": 0.5834
+    },
+    {
+      "src": "L15:10716",
+      "dst": "L16:16028",
+      "grad": 0.5803
+    },
+    {
+      "src": "L10:4392",
+      "dst": "L11:12945",
+      "grad": 0.5677
+    },
+    {
+      "src": "L9:12102",
+      "dst": "L10:4392",
+      "grad": 0.5469
+    },
+    {
+      "src": "L13:11248",
+      "dst": "L14:15567",
+      "grad": 0.5425
+    },
+    {
+      "src": "L12:1041",
+      "dst": "L13:11248",
+      "grad": 0.5173
+    },
+    {
+      "src": "L7:12287",
+      "dst": "L8:9213",
+      "grad": 0.5078
+    },
+    {
+      "src": "L21:10807",
+      "dst": "L22:14231",
+      "grad": 0.4169
+    },
+    {
+      "src": "L24:8662",
+      "dst": "L25:12908",
+      "grad": 0.416
+    },
+    {
+      "src": "L11:12945",
+      "dst": "L12:1041",
+      "grad": 0.4041
+    },
+    {
+      "src": "L8:9213",
+      "dst": "L9:12102",
+      "grad": 0.2579
+    },
+    {
+      "src": "L24:4680",
+      "dst": "L25:14325",
+      "grad": 0.2559
+    },
+    {
+      "src": "L24:14870",
+      "dst": "L25:10150",
+      "grad": -0.2528
+    },
+    {
+      "src": "L19:13584",
+      "dst": "L20:6631",
+      "grad": 0.2406
+    },
+    {
+      "src": "L23:1500",
+      "dst": "L24:261",
+      "grad": 0.223
+    },
+    {
+      "src": "L19:13226",
+      "dst": "L20:6370",
+      "grad": 0.2066
+    },
+    {
+      "src": "L24:12367",
+      "dst": "L25:5755",
+      "grad": 0.2037
+    },
+    {
+      "src": "L23:5286",
+      "dst": "L24:261",
+      "grad": 0.196
+    },
+    {
+      "src": "L24:4680",
+      "dst": "L25:1689",
+      "grad": 0.1788
+    },
+    {
+      "src": "L21:13174",
+      "dst": "L22:15056",
+      "grad": 0.1787
+    },
+    {
+      "src": "L24:3848",
+      "dst": "L25:14325",
+      "grad": 0.1767
+    },
+    {
+      "src": "L24:3848",
+      "dst": "L25:5755",
+      "grad": -0.1713
+    },
+    {
+      "src": "L13:15177",
+      "dst": "L14:15567",
+      "grad": 0.1711
+    },
+    {
+      "src": "L21:12441",
+      "dst": "L22:15056",
+      "grad": 0.1676
+    },
+    {
+      "src": "L19:10678",
+      "dst": "L20:6631",
+      "grad": 0.1643
+    },
+    {
+      "src": "L19:13226",
+      "dst": "L20:15889",
+      "grad": 0.164
+    },
+    {
+      "src": "L19:10678",
+      "dst": "L20:12545",
+      "grad": 0.1505
+    },
+    {
+      "src": "L13:15177",
+      "dst": "Logit: Kristi (S)",
+      "grad": -0.1493
+    },
+    {
+      "src": "L24:4680",
+      "dst": "L25:12908",
+      "grad": 0.1488
+    },
+    {
+      "src": "L24:8662",
+      "dst": "L25:10150",
+      "grad": -0.1465
+    },
+    {
+      "src": "L24:3848",
+      "dst": "L25:1689",
+      "grad": -0.1461
+    },
+    {
+      "src": "L20:15889",
+      "dst": "L21:5400",
+      "grad": 0.1435
+    },
+    {
+      "src": "L21:12441",
+      "dst": "L22:14231",
+      "grad": 0.1381
+    },
+    {
+      "src": "L23:1500",
+      "dst": "L24:3848",
+      "grad": 0.1313
+    },
+    {
+      "src": "L18:14807",
+      "dst": "L19:422",
+      "grad": 0.1278
+    },
+    {
+      "src": "L20:9768",
+      "dst": "L21:5400",
+      "grad": 0.1211
+    },
+    {
+      "src": "L24:14870",
+      "dst": "L25:5755",
+      "grad": 0.1185
+    },
+    {
+      "src": "L21:5400",
+      "dst": "L22:14231",
+      "grad": 0.1181
+    },
+    {
+      "src": "L24:14870",
+      "dst": "L25:1689",
+      "grad": -0.1158
+    },
+    {
+      "src": "L23:4121",
+      "dst": "L24:261",
+      "grad": 0.111
+    },
+    {
+      "src": "L24:261",
+      "dst": "L25:10150",
+      "grad": 0.1097
+    },
+    {
+      "src": "L24:8662",
+      "dst": "L25:5755",
+      "grad": -0.105
+    },
+    {
+      "src": "L20:6370",
+      "dst": "L21:4138",
+      "grad": -0.104
+    },
+    {
+      "src": "L23:5286",
+      "dst": "L24:3848",
+      "grad": 0.1038
+    },
+    {
+      "src": "L24:12367",
+      "dst": "L25:10150",
+      "grad": -0.1013
+    },
+    {
+      "src": "L22:10566",
+      "dst": "L23:6961",
+      "grad": 0.098
+    },
+    {
+      "src": "L24:8662",
+      "dst": "L25:14325",
+      "grad": 0.0908
+    },
+    {
+      "src": "L20:6370",
+      "dst": "L21:5400",
+      "grad": -0.0902
+    },
+    {
+      "src": "L23:5286",
+      "dst": "L24:14870",
+      "grad": 0.0883
+    },
+    {
+      "src": "L24:9589",
+      "dst": "L25:10150",
+      "grad": 0.0858
+    },
+    {
+      "src": "L24:4680",
+      "dst": "L25:10150",
+      "grad": -0.0784
+    },
+    {
+      "src": "L24:4680",
+      "dst": "L25:5755",
+      "grad": -0.0778
+    },
+    {
+      "src": "L24:261",
+      "dst": "L25:14325",
+      "grad": -0.0765
+    },
+    {
+      "src": "L24:4680",
+      "dst": "L25:3017",
+      "grad": -0.0751
+    },
+    {
+      "src": "L23:1500",
+      "dst": "L24:12367",
+      "grad": 0.0739
+    },
+    {
+      "src": "L20:9768",
+      "dst": "L21:12441",
+      "grad": 0.071
+    },
+    {
+      "src": "L24:3848",
+      "dst": "L25:8456",
+      "grad": 0.0692
+    },
+    {
+      "src": "L21:5400",
+      "dst": "L22:15056",
+      "grad": -0.0678
+    },
+    {
+      "src": "L21:9999",
+      "dst": "L22:15056",
+      "grad": 0.0677
+    },
+    {
+      "src": "L19:422",
+      "dst": "L20:6631",
+      "grad": 0.0665
+    },
+    {
+      "src": "L21:5400",
+      "dst": "L22:10566",
+      "grad": 0.0662
+    },
+    {
+      "src": "L18:14807",
+      "dst": "Logit: Kristi (S)",
+      "grad": 0.0659
+    },
+    {
+      "src": "L21:13174",
+      "dst": "L22:14231",
+      "grad": 0.0647
+    },
+    {
+      "src": "L15:1695",
+      "dst": "L16:16028",
+      "grad": 0.0641
+    },
+    {
+      "src": "L20:12545",
+      "dst": "L21:5400",
+      "grad": -0.0631
+    },
+    {
+      "src": "L23:1500",
+      "dst": "L24:14870",
+      "grad": 0.0627
+    },
+    {
+      "src": "L18:9392",
+      "dst": "L19:422",
+      "grad": 0.0621
+    },
+    {
+      "src": "L24:3848",
+      "dst": "L25:3017",
+      "grad": -0.0603
+    },
+    {
+      "src": "L23:6961",
+      "dst": "L24:3848",
+      "grad": 0.0577
+    },
+    {
+      "src": "L19:3019",
+      "dst": "L20:12545",
+      "grad": 0.0571
+    },
+    {
+      "src": "L24:9589",
+      "dst": "L25:14325",
+      "grad": -0.0564
+    },
+    {
+      "src": "L23:5205",
+      "dst": "L24:261",
+      "grad": 0.0553
+    },
+    {
+      "src": "L24:1860",
+      "dst": "L25:5755",
+      "grad": -0.0549
+    },
+    {
+      "src": "L23:6961",
+      "dst": "L24:4680",
+      "grad": 0.054
+    },
+    {
+      "src": "L20:6370",
+      "dst": "L21:10807",
+      "grad": 0.0525
+    },
+    {
+      "src": "L24:8662",
+      "dst": "L25:3017",
+      "grad": -0.0515
+    },
+    {
+      "src": "L22:10566",
+      "dst": "L23:4121",
+      "grad": 0.0514
+    },
+    {
+      "src": "L23:5205",
+      "dst": "L24:4680",
+      "grad": -0.0509
+    },
+    {
+      "src": "L24:14870",
+      "dst": "L25:12908",
+      "grad": -0.0505
+    },
+    {
+      "src": "L24:14870",
+      "dst": "L25:14325",
+      "grad": 0.0502
+    },
+    {
+      "src": "L24:261",
+      "dst": "L25:1689",
+      "grad": -0.0495
+    },
+    {
+      "src": "L24:14870",
+      "dst": "L25:8456",
+      "grad": -0.0484
+    },
+    {
+      "src": "L22:5286",
+      "dst": "L23:6961",
+      "grad": 0.0448
+    },
+    {
+      "src": "L19:13226",
+      "dst": "Logit: Kristi (S)",
+      "grad": 0.0438
+    },
+    {
+      "src": "L24:261",
+      "dst": "L25:3017",
+      "grad": -0.0429
+    },
+    {
+      "src": "L19:13584",
+      "dst": "L20:6370",
+      "grad": -0.0424
+    },
+    {
+      "src": "L20:15889",
+      "dst": "L21:12441",
+      "grad": 0.042
+    },
+    {
+      "src": "L23:4121",
+      "dst": "L24:14870",
+      "grad": -0.0419
+    },
+    {
+      "src": "L24:9589",
+      "dst": "L25:1689",
+      "grad": 0.0406
+    },
+    {
+      "src": "L24:3848",
+      "dst": "L25:12908",
+      "grad": 0.0402
+    },
+    {
+      "src": "L22:5286",
+      "dst": "L23:1500",
+      "grad": -0.0398
+    },
+    {
+      "src": "L23:1500",
+      "dst": "L24:1860",
+      "grad": 0.0388
+    },
+    {
+      "src": "L24:12367",
+      "dst": "L25:8456",
+      "grad": -0.0379
+    },
+    {
+      "src": "L24:1860",
+      "dst": "L25:3017",
+      "grad": -0.0374
+    },
+    {
+      "src": "L23:6961",
+      "dst": "L24:14870",
+      "grad": 0.037
+    },
+    {
+      "src": "L21:9999",
+      "dst": "L22:14231",
+      "grad": 0.0361
+    },
+    {
+      "src": "L22:5286",
+      "dst": "L23:4121",
+      "grad": 0.036
+    },
+    {
+      "src": "L23:5205",
+      "dst": "L24:14870",
+      "grad": 0.0348
+    },
+    {
+      "src": "L24:3848",
+      "dst": "Logit: Kristi (S)",
+      "grad": 0.0347
+    },
+    {
+      "src": "L18:14807",
+      "dst": "L19:10678",
+      "grad": -0.0339
+    },
+    {
+      "src": "L20:15889",
+      "dst": "L21:9999",
+      "grad": 0.0338
+    },
+    {
+      "src": "L23:4121",
+      "dst": "L24:12367",
+      "grad": 0.0338
+    },
+    {
+      "src": "L15:1695",
+      "dst": "Logit: Kristi (S)",
+      "grad": -0.0332
+    },
+    {
+      "src": "L19:3019",
+      "dst": "L20:6631",
+      "grad": -0.033
+    },
+    {
+      "src": "L24:12367",
+      "dst": "L25:14325",
+      "grad": 0.0327
+    },
+    {
+      "src": "L24:261",
+      "dst": "L25:5755",
+      "grad": -0.0325
+    },
+    {
+      "src": "L21:12441",
+      "dst": "L22:3497",
+      "grad": -0.0314
+    },
+    {
+      "src": "L21:13174",
+      "dst": "Logit: Kristi (S)",
+      "grad": 0.0312
+    },
+    {
+      "src": "L20:15889",
+      "dst": "L21:5639",
+      "grad": 0.031
+    },
+    {
+      "src": "L17:7127",
+      "dst": "L18:9392",
+      "grad": 0.0303
+    },
+    {
+      "src": "L21:13174",
+      "dst": "L22:10566",
+      "grad": -0.0302
+    },
+    {
+      "src": "L24:3848",
+      "dst": "L25:10150",
+      "grad": 0.0299
+    },
+    {
+      "src": "L20:15889",
+      "dst": "L21:4138",
+      "grad": 0.0279
+    },
+    {
+      "src": "L21:4138",
+      "dst": "L22:14231",
+      "grad": 0.0279
+    },
+    {
+      "src": "L22:5286",
+      "dst": "Logit: Kristi (S)",
+      "grad": 0.0279
+    },
+    {
+      "src": "L17:7127",
+      "dst": "Logit: Kristi (S)",
+      "grad": 0.0271
+    },
+    {
+      "src": "L20:6370",
+      "dst": "Logit: Kristi (S)",
+      "grad": 0.0266
+    },
+    {
+      "src": "L19:422",
+      "dst": "L20:12545",
+      "grad": 0.0265
+    },
+    {
+      "src": "L13:15177",
+      "dst": "Logit: Juana (IO)",
+      "grad": 0.0264
+    },
+    {
+      "src": "L20:6370",
+      "dst": "L21:5639",
+      "grad": 0.0263
+    },
+    {
+      "src": "L23:4121",
+      "dst": "L24:8662",
+      "grad": 0.026
+    },
+    {
+      "src": "L18:8578",
+      "dst": "L19:13226",
+      "grad": 0.0253
+    },
+    {
+      "src": "L20:9768",
+      "dst": "Logit: Kristi (S)",
+      "grad": 0.0252
+    },
+    {
+      "src": "L24:1860",
+      "dst": "L25:14325",
+      "grad": 0.0244
+    },
+    {
+      "src": "L12:1041",
+      "dst": "L13:15177",
+      "grad": -0.0243
+    },
+    {
+      "src": "L19:10678",
+      "dst": "L20:6370",
+      "grad": -0.0237
+    },
+    {
+      "src": "L23:5205",
+      "dst": "L24:3848",
+      "grad": -0.0234
+    },
+    {
+      "src": "L18:8578",
+      "dst": "L19:422",
+      "grad": -0.0232
+    },
+    {
+      "src": "L24:4680",
+      "dst": "L25:8456",
+      "grad": -0.023
+    },
+    {
+      "src": "L24:9589",
+      "dst": "L25:12908",
+      "grad": -0.0227
+    },
+    {
+      "src": "L20:6631",
+      "dst": "L21:12441",
+      "grad": -0.0224
+    },
+    {
+      "src": "L21:5639",
+      "dst": "Logit: Kristi (S)",
+      "grad": 0.0223
+    },
+    {
+      "src": "L18:9392",
+      "dst": "Logit: Kristi (S)",
+      "grad": 0.0221
+    },
+    {
+      "src": "L19:10678",
+      "dst": "L20:15889",
+      "grad": 0.0212
+    },
+    {
+      "src": "L22:10566",
+      "dst": "L23:5205",
+      "grad": -0.0207
+    },
+    {
+      "src": "L23:6961",
+      "dst": "L24:8662",
+      "grad": -0.0204
+    },
+    {
+      "src": "L21:9999",
+      "dst": "Logit: Kristi (S)",
+      "grad": 0.0204
+    },
+    {
+      "src": "L21:9999",
+      "dst": "L22:10566",
+      "grad": 0.0199
+    },
+    {
+      "src": "L23:5286",
+      "dst": "L24:8662",
+      "grad": 0.0199
+    },
+    {
+      "src": "L21:5639",
+      "dst": "L22:10566",
+      "grad": -0.0197
+    },
+    {
+      "src": "L17:7127",
+      "dst": "L18:8578",
+      "grad": -0.0195
+    },
+    {
+      "src": "L21:12441",
+      "dst": "Logit: Juana (IO)",
+      "grad": 0.0194
+    },
+    {
+      "src": "L23:6961",
+      "dst": "L24:9589",
+      "grad": 0.0191
+    },
+    {
+      "src": "L21:12441",
+      "dst": "Logit: Kristi (S)",
+      "grad": 0.0191
+    },
+    {
+      "src": "L19:10678",
+      "dst": "Logit: Kristi (S)",
+      "grad": -0.019
+    },
+    {
+      "src": "L18:9392",
+      "dst": "L19:13226",
+      "grad": -0.0188
+    },
+    {
+      "src": "L16:16028",
+      "dst": "Logit: Kristi (S)",
+      "grad": 0.0188
+    },
+    {
+      "src": "L19:13226",
+      "dst": "Logit: Juana (IO)",
+      "grad": -0.0188
+    },
+    {
+      "src": "L20:6631",
+      "dst": "Logit: Kristi (S)",
+      "grad": 0.0187
+    },
+    {
+      "src": "L18:14807",
+      "dst": "Logit: Juana (IO)",
+      "grad": -0.0186
+    },
+    {
+      "src": "L22:5286",
+      "dst": "L23:5205",
+      "grad": -0.0183
+    },
+    {
+      "src": "L21:4138",
+      "dst": "Logit: Kristi (S)",
+      "grad": 0.018
+    },
+    {
+      "src": "L14:15567",
+      "dst": "L15:1695",
+      "grad": -0.0179
+    },
+    {
+      "src": "L23:1500",
+      "dst": "Logit: Kristi (S)",
+      "grad": -0.0171
+    },
+    {
+      "src": "L20:12545",
+      "dst": "Logit: Kristi (S)",
+      "grad": -0.0169
+    },
+    {
+      "src": "L24:261",
+      "dst": "L25:12908",
+      "grad": -0.0167
+    },
+    {
+      "src": "L19:13226",
+      "dst": "L20:9768",
+      "grad": -0.0166
+    },
+    {
+      "src": "L19:13584",
+      "dst": "Logit: Kristi (S)",
+      "grad": 0.0161
+    },
+    {
+      "src": "L24:3848",
+      "dst": "Logit: Juana (IO)",
+      "grad": 0.0161
+    },
+    {
+      "src": "L19:422",
+      "dst": "L20:6370",
+      "grad": -0.016
+    },
+    {
+      "src": "L23:5205",
+      "dst": "L24:8662",
+      "grad": -0.016
+    },
+    {
+      "src": "L24:12367",
+      "dst": "L25:3017",
+      "grad": 0.016
+    },
+    {
+      "src": "L20:12545",
+      "dst": "L21:5639",
+      "grad": 0.0159
+    },
+    {
+      "src": "L23:4121",
+      "dst": "L24:3848",
+      "grad": -0.0154
+    },
+    {
+      "src": "L24:261",
+      "dst": "L25:8456",
+      "grad": -0.0154
+    },
+    {
+      "src": "L24:1860",
+      "dst": "L25:8456",
+      "grad": -0.0152
+    },
+    {
+      "src": "L24:12367",
+      "dst": "L25:1689",
+      "grad": 0.015
+    },
+    {
+      "src": "L24:9589",
+      "dst": "L25:8456",
+      "grad": 0.0149
+    },
+    {
+      "src": "L21:10807",
+      "dst": "L22:10566",
+      "grad": 0.0144
+    },
+    {
+      "src": "L19:3019",
+      "dst": "L20:15889",
+      "grad": 0.0143
+    },
+    {
+      "src": "L23:4121",
+      "dst": "L24:4680",
+      "grad": -0.0142
+    },
+    {
+      "src": "L19:13584",
+      "dst": "L20:15889",
+      "grad": 0.0141
+    },
+    {
+      "src": "L22:15056",
+      "dst": "Logit: Kristi (S)",
+      "grad": 0.0141
+    },
+    {
+      "src": "L22:14231",
+      "dst": "L23:1500",
+      "grad": 0.0138
+    },
+    {
+      "src": "L24:12367",
+      "dst": "L25:12908",
+      "grad": 0.0138
+    },
+    {
+      "src": "L23:5205",
+      "dst": "L24:9589",
+      "grad": 0.0134
+    },
+    {
+      "src": "L20:6370",
+      "dst": "L21:9999",
+      "grad": 0.0133
+    },
+    {
+      "src": "L24:8662",
+      "dst": "L25:1689",
+      "grad": -0.0133
+    },
+    {
+      "src": "L24:12367",
+      "dst": "Logit: Kristi (S)",
+      "grad": -0.0133
+    },
+    {
+      "src": "L24:14870",
+      "dst": "Logit: Kristi (S)",
+      "grad": 0.0131
+    },
+    {
+      "src": "L22:15056",
+      "dst": "L23:5286",
+      "grad": 0.013
+    },
+    {
+      "src": "L20:9768",
+      "dst": "L21:10807",
+      "grad": -0.0128
+    },
+    {
+      "src": "L22:10566",
+      "dst": "Logit: Juana (IO)",
+      "grad": 0.0128
+    },
+    {
+      "src": "L20:6631",
+      "dst": "L21:5400",
+      "grad": -0.0123
+    },
+    {
+      "src": "L20:12545",
+      "dst": "L21:12441",
+      "grad": -0.0123
+    },
+    {
+      "src": "L15:10716",
+      "dst": "Logit: Kristi (S)",
+      "grad": 0.0123
+    },
+    {
+      "src": "L20:6370",
+      "dst": "L21:13174",
+      "grad": 0.0119
+    },
+    {
+      "src": "L23:5286",
+      "dst": "L24:12367",
+      "grad": -0.0118
+    },
+    {
+      "src": "L21:4138",
+      "dst": "L22:10566",
+      "grad": 0.0114
+    },
+    {
+      "src": "L21:5639",
+      "dst": "L22:14231",
+      "grad": 0.0114
+    },
+    {
+      "src": "L18:8578",
+      "dst": "L19:3019",
+      "grad": -0.0112
+    },
+    {
+      "src": "L19:13226",
+      "dst": "L20:6631",
+      "grad": -0.0112
+    },
+    {
+      "src": "L22:3497",
+      "dst": "L23:1500",
+      "grad": -0.0112
+    },
+    {
+      "src": "L23:5286",
+      "dst": "L24:1860",
+      "grad": -0.0112
+    },
+    {
+      "src": "L20:9768",
+      "dst": "L21:9999",
+      "grad": -0.0111
+    },
+    {
+      "src": "L23:1500",
+      "dst": "L24:9589",
+      "grad": 0.0111
+    },
+    {
+      "src": "L23:4121",
+      "dst": "L24:1860",
+      "grad": 0.011
+    },
+    {
+      "src": "L24:1860",
+      "dst": "L25:10150",
+      "grad": 0.0109
+    },
+    {
+      "src": "L18:14807",
+      "dst": "L19:13584",
+      "grad": -0.0106
+    },
+    {
+      "src": "L19:3019",
+      "dst": "Logit: Kristi (S)",
+      "grad": 0.0106
+    },
+    {
+      "src": "L23:5286",
+      "dst": "L24:4680",
+      "grad": 0.0105
+    },
+    {
+      "src": "L22:15056",
+      "dst": "L23:1500",
+      "grad": -0.0104
+    },
+    {
+      "src": "L21:5639",
+      "dst": "L22:15056",
+      "grad": 0.0098
+    },
+    {
+      "src": "L20:6631",
+      "dst": "L21:10807",
+      "grad": -0.0097
+    },
+    {
+      "src": "L23:5205",
+      "dst": "L24:12367",
+      "grad": 0.0096
+    },
+    {
+      "src": "L22:3497",
+      "dst": "L23:4121",
+      "grad": 0.0095
+    },
+    {
+      "src": "L24:9589",
+      "dst": "L25:3017",
+      "grad": 0.0094
+    },
+    {
+      "src": "L19:13226",
+      "dst": "L20:12545",
+      "grad": -0.0093
+    },
+    {
+      "src": "L20:12545",
+      "dst": "L21:10807",
+      "grad": 0.0093
+    },
+    {
+      "src": "L22:14231",
+      "dst": "L23:5286",
+      "grad": -0.0093
+    },
+    {
+      "src": "L20:9768",
+      "dst": "L21:4138",
+      "grad": -0.0091
+    },
+    {
+      "src": "L24:1860",
+      "dst": "L25:1689",
+      "grad": -0.0091
+    },
+    {
+      "src": "L22:10566",
+      "dst": "Logit: Kristi (S)",
+      "grad": -0.009
+    },
+    {
+      "src": "L19:13584",
+      "dst": "L20:12545",
+      "grad": -0.0089
+    },
+    {
+      "src": "L20:9768",
+      "dst": "L21:5639",
+      "grad": 0.0085
+    },
+    {
+      "src": "L21:10807",
+      "dst": "Logit: Kristi (S)",
+      "grad": 0.0081
+    },
+    {
+      "src": "L20:15889",
+      "dst": "L21:13174",
+      "grad": -0.008
+    },
+    {
+      "src": "L18:8578",
+      "dst": "Logit: Kristi (S)",
+      "grad": -0.0078
+    },
+    {
+      "src": "L24:12367",
+      "dst": "Logit: Juana (IO)",
+      "grad": 0.0077
+    },
+    {
+      "src": "L21:9999",
+      "dst": "L22:3497",
+      "grad": -0.0072
+    },
+    {
+      "src": "L19:13584",
+      "dst": "L20:9768",
+      "grad": -0.0071
+    },
+    {
+      "src": "L21:10807",
+      "dst": "L22:15056",
+      "grad": -0.0071
+    }
+  ]
+}

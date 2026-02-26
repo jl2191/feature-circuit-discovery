@@ -85,11 +85,17 @@ def load_sae(filename: str, device: torch.device) -> JumpReLUSAE:
         filename=filename,
         force_download=False,
     )
-    tensors = load_safetensors(path_to_params)
-    # Gemma Scope 2 uses lowercase keys (w_enc, b_dec); remap to JumpReLUSAE (W_enc, b_dec)
-    KEY_MAP = {"w_enc": "W_enc", "w_dec": "W_dec", "b_enc": "b_enc", "b_dec": "b_dec", "threshold": "threshold"}
-    pt_params = {KEY_MAP.get(k, k): v for k, v in tensors.items()}
-    pt_params = {k: v.to(device) for k, v in pt_params.items()}
+
+    if filename.endswith(".npz"):
+        # Gemma Scope 1 (e.g. gemma-2-2b) uses .npz with uppercase keys
+        np_params = np.load(path_to_params)
+        pt_params = {k: torch.from_numpy(np_params[k]).to(device) for k in np_params.files}
+    else:
+        # Gemma Scope 2 (e.g. gemma-3-1b) uses .safetensors with lowercase keys
+        tensors = load_safetensors(path_to_params)
+        KEY_MAP = {"w_enc": "W_enc", "w_dec": "W_dec", "b_enc": "b_enc", "b_dec": "b_dec", "threshold": "threshold"}
+        pt_params = {KEY_MAP.get(k, k): v for k, v in tensors.items()}
+        pt_params = {k: v.to(device) for k, v in pt_params.items()}
 
     # [OPT 6] Move SAE to device *before* load_state_dict to avoid
     # double transfer (CPU→GPU in pt_params, then GPU→CPU in load_state_dict,
@@ -516,6 +522,103 @@ def compute_gradient_matrices_batch(
     if device.type == "mps":
         torch.mps.empty_cache()
     return results, logit_grad_matrix
+
+
+# ---------------------------------------------------------------------------
+# Token attribution — ∂(feature_act) / ∂(embedding_perturbation)
+# ---------------------------------------------------------------------------
+
+
+def compute_token_gradients(
+    inputs: torch.Tensor,
+    activated_features: list[torch.Tensor],
+    model: AutoModelForCausalLM,
+    n_features: int = 50,
+    verbose: bool = False,
+) -> dict[int, torch.Tensor]:
+    """Compute how much each input token contributes to each SAE feature activation.
+
+    Uses a multiplicative perturbation at the embedding level:
+        output = embedding * (1 + a)
+    where a is a (seq_len,) vector of learnable scalars. The gradient
+    ∂(feature_act[feat, last_pos]) / ∂(a[t]) measures how much token t
+    contributes to each feature's activation at the prediction position.
+
+    Args:
+        inputs: Tokenized input (1, seq_len).
+        activated_features: Feature IDs per layer (list of 1D tensors).
+        model: The language model.
+        n_features: Max features per layer.
+        verbose: Print progress.
+
+    Returns:
+        Dict mapping layer_idx -> (n_features_in_layer, seq_len) gradient tensor.
+    """
+    device = next(model.parameters()).device
+    seq_len = inputs.shape[1]
+    num_layers = min(model.config.num_hidden_layers, MAX_SAE_LAYER + 1)
+
+    gc.collect()
+    if device.type == "mps":
+        torch.mps.empty_cache()
+
+    with torch.enable_grad():
+        a = torch.zeros(seq_len, requires_grad=True, device=device)
+
+        def hook_embeddings(module, input, output):
+            return output * (1 + a.view(1, seq_len, 1))
+
+        hook = model.model.embed_tokens.register_forward_hook(hook_embeddings)
+        outputs = model(inputs, output_hidden_states=True)
+        hook.remove()
+
+        hidden_states = outputs.hidden_states
+        last_pos = inputs.shape[1] - 1
+
+        # Count total grads for retain_graph management
+        total_grads = sum(
+            min(n_features, len(activated_features[layer]))
+            for layer in range(num_layers)
+        )
+        grad_done = 0
+
+        token_grads: dict[int, torch.Tensor] = {}
+
+        for layer in range(num_layers):
+            feats = activated_features[layer][:n_features]
+            n = len(feats)
+            if n == 0:
+                continue
+
+            sae = load_sae(canonical_sae_filenames[layer], device)
+            sae_acts = sae.encode(hidden_states[layer + 1].float())
+            feat_acts = sae_acts[0, last_pos, feats]  # (n,)
+
+            grad_matrix = torch.zeros(n, seq_len, device=device)
+
+            for i in range(n):
+                grad_done += 1
+                is_last = (grad_done == total_grads)
+                (grad,) = torch.autograd.grad(
+                    feat_acts[i],
+                    a,
+                    retain_graph=not is_last,
+                    allow_unused=True,
+                )
+                if grad is not None:
+                    grad_matrix[i, :] = grad.detach()
+
+            token_grads[layer] = grad_matrix
+
+            if verbose:
+                print(f"  Token grads L{layer}: max={grad_matrix.abs().max():.4f}, "
+                      f"nonzero={grad_matrix.count_nonzero()}/{grad_matrix.numel()}")
+
+    gc.collect()
+    if device.type == "mps":
+        torch.mps.empty_cache()
+
+    return token_grads
 
 
 # ---------------------------------------------------------------------------
