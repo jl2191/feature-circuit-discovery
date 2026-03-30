@@ -132,10 +132,21 @@ if __name__ == "__main__":
     num_layers = min(model.config.num_hidden_layers, MAX_SAE_LAYER + 1)
     print(f"Model layers: {model.config.num_hidden_layers}, using {num_layers} (SAE coverage)")
 
-    # Use first IOI prompt for gradient computation
-    inputs = tokenizer.encode(
-        prompts_ioi[0], return_tensors="pt", add_special_tokens=True
-    ).to(device)
+    # Batch all prompts for gradient computation (label-aligned averaging)
+    all_prompts = prompts_ioi + prompts_swapped
+    tokenized = tokenizer(
+        all_prompts, return_tensors="pt", add_special_tokens=True, padding=True
+    )
+    inputs = tokenized["input_ids"].to(device)
+    attention_mask = tokenized["attention_mask"].to(device)
+
+    # Label-aligned signs: +1 for IOI (original), -1 for name-swapped
+    prompt_signs = torch.cat([
+        torch.ones(len(prompts_ioi), device=device),
+        -torch.ones(len(prompts_swapped), device=device),
+    ])
+    print(f"\nGradient input: {len(all_prompts)} prompts, shape {tuple(inputs.shape)}")
+    print(f"Label-aligned: {len(prompts_ioi)} IOI (+1), {len(prompts_swapped)} swapped (-1)")
 
     # Get contrastive features — IOI vs name-swapped
     print("\nFinding contrastive features (IOI vs name-swapped)...")
@@ -144,23 +155,45 @@ if __name__ == "__main__":
     )
     print(f"Features per layer (first 5): {[len(f) for f in activated_features[:5]]}")
 
-    # Logit attribution: use the IO name token from the first prompt
-    # Encode both the correct IO name and the subject name
-    io_name = solutions_ioi[0]  # e.g. "Juana"
-    # Find the subject name (the other name)
-    match = re.search(r"(\b[A-Z][a-z]+\b)\s+and\s+(\b[A-Z][a-z]+\b)", sentences_ioi[0])
-    if match:
-        name1, name2 = match.group(1), match.group(2)
-        subj_name = name1 if name1 != io_name else name2
-    else:
-        subj_name = io_name  # fallback
+    # Logit attribution: per-prompt IO and S name tokens
+    # For original prompts: IO = solution name, S = the other name (giver)
+    # For swapped prompts: roles flip — IO becomes the original S, S becomes the original IO
+    n_total = len(all_prompts)
+    io_token_ids_list = []  # per-prompt IO name token IDs
+    subj_token_ids_list = []  # per-prompt S name token IDs
 
-    # Tokenize with leading space (as they'd appear after "to")
-    io_token_id = tokenizer.encode(f" {io_name}", add_special_tokens=False)[0]
-    subj_token_id = tokenizer.encode(f" {subj_name}", add_special_tokens=False)[0]
-    logit_token_ids = [io_token_id, subj_token_id]
-    logit_token_labels = [f" {io_name} (IO)", f" {subj_name} (S)"]
-    print(f"Logit tokens: {list(zip(logit_token_labels, logit_token_ids))}")
+    for idx in range(N_PROMPTS):
+        io_name = solutions_ioi[idx]
+        match = re.search(r"(\b[A-Z][a-z]+\b)\s+and\s+(\b[A-Z][a-z]+\b)", sentences_ioi[idx])
+        if match:
+            name1, name2 = match.group(1), match.group(2)
+            subj_name = name1 if name1 != io_name else name2
+        else:
+            subj_name = io_name  # fallback
+
+        io_tid = tokenizer.encode(f" {io_name}", add_special_tokens=False)[0]
+        subj_tid = tokenizer.encode(f" {subj_name}", add_special_tokens=False)[0]
+
+        # Original prompt: IO = solution, S = giver
+        io_token_ids_list.append(io_tid)
+        subj_token_ids_list.append(subj_tid)
+
+    for idx in range(N_PROMPTS):
+        # Swapped prompt: names are swapped, so IO and S token IDs also swap
+        io_token_ids_list.append(subj_token_ids_list[idx])
+        subj_token_ids_list.append(io_token_ids_list[idx])
+
+    # Shape: (2, n_total) — slot 0 = IO name, slot 1 = S name
+    logit_token_ids_per_prompt = torch.tensor(
+        [io_token_ids_list, subj_token_ids_list], dtype=torch.long, device=device,
+    )
+    logit_token_labels = ["IO name", "S name"]
+    # Representative token IDs for export tooltip (from first prompt)
+    first_io_token_id = io_token_ids_list[0]
+    first_subj_token_id = subj_token_ids_list[0]
+    logit_token_ids = [first_io_token_id, first_subj_token_id]
+    print(f"Logit tokens (per-prompt): {logit_token_ids_per_prompt.shape}")
+    print(f"  Representative: {list(zip(logit_token_labels, logit_token_ids))}")
 
     # All upstream → downstream layer pairs
     layer_pairs = [(i, j) for i in range(num_layers) for j in range(i + 1, num_layers)]
@@ -192,7 +225,8 @@ if __name__ == "__main__":
         t0 = time.time()
         batch_results, logit_grad_matrix = compute_gradient_matrices_batch(
             inputs, up_layer, downstream_pairs, up_feats, model, verbose=True,
-            logit_token_ids=logit_token_ids,
+            logit_token_ids_per_prompt=logit_token_ids_per_prompt,
+            prompt_signs=prompt_signs, attention_mask=attention_mask,
         )
         elapsed = time.time() - t0
 
@@ -210,7 +244,7 @@ if __name__ == "__main__":
           f"for {n_pairs} pairs ---")
 
     # Free model memory before export
-    del model, tokenizer, inputs
+    del model, tokenizer, inputs, attention_mask
     _sae_cache.clear()
     gc.collect()
     if device.type == "mps":
@@ -220,13 +254,13 @@ if __name__ == "__main__":
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     json_path = f"results/ioi_gemma2_2b_{timestamp}.json"
 
-    all_prompts = prompts_ioi + prompts_swapped
     metadata = {
         "model": MODEL_ID,
         "sae_repo": "google/gemma-scope-2b-pt-res",
         "prompts": all_prompts,
         "n_features_per_layer": N_FEATURES,
         "feature_selection": "contrastive (|mean_act_ioi - mean_act_swapped|)",
+        "gradient_method": f"label-aligned average over {len(all_prompts)} prompts (IOI=+1, swapped=-1)",
         "ioi_prompts": prompts_ioi,
         "swapped_prompts": prompts_swapped,
         "solutions": solutions_ioi,

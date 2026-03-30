@@ -213,13 +213,18 @@ def get_contrastive_features(
         activation_frequencies: Dict mapping layer -> {feature_id: diff_score}.
     """
     def _encode_batch(prompts):
-        tokens = (
-            tokenizer(prompts, return_tensors="pt", add_special_tokens=True, padding=True)
-            .data["input_ids"]
-            .to(device)
-        )
+        tokenized = tokenizer(prompts, return_tensors="pt", add_special_tokens=True, padding=True)
+        tokens = tokenized["input_ids"].to(device)
+        attn_mask = tokenized["attention_mask"].to(device)
         with torch.no_grad():
-            outputs = model(tokens, output_hidden_states=True)
+            model_kwargs = dict(output_hidden_states=True)
+            # Pass attention_mask when padding is present so the model
+            # doesn't attend to pad tokens.
+            pad_token_id = 0  # Gemma pad token
+            has_padding = (tokens == pad_token_id).any()
+            if has_padding:
+                model_kwargs["attention_mask"] = attn_mask
+            outputs = model(tokens, **model_kwargs)
             hidden_states = outputs.hidden_states
             del outputs
             # Encode all layers through SAEs, extract last token position
@@ -384,6 +389,132 @@ def compute_gradient_matrix(
 
 
 # ---------------------------------------------------------------------------
+# Jacobian-based gradient matrix — replaces the per-feature loop with a
+# single torch.autograd.functional.jacobian call
+# ---------------------------------------------------------------------------
+
+
+def compute_gradient_matrix_jacobian(
+    inputs: torch.Tensor,
+    upstream_layer_idx: int,
+    downstream_layer_idx: int,
+    upstream_features: torch.Tensor,
+    downstream_features: torch.Tensor,
+    model: AutoModelForCausalLM,
+    verbose: bool = False,
+    vectorize: bool = True,
+) -> torch.Tensor:
+    """Same semantics as compute_gradient_matrix but uses torch.autograd.functional.jacobian.
+
+    Only runs layers upstream..downstream (not the full model), and batches
+    backward passes via vmap when vectorize=True.
+    """
+    device = model.device
+    if device is None:
+        device = next(model.parameters()).device
+
+    gc.collect()
+    if device.type == "mps":
+        torch.mps.empty_cache()
+
+    if verbose:
+        print(f"loading SAEs (layers {upstream_layer_idx}, {downstream_layer_idx})")
+    sae_upstream = load_sae(canonical_sae_filenames[upstream_layer_idx], device)
+    sae_downstream = load_sae(canonical_sae_filenames[downstream_layer_idx], device)
+
+    m = len(upstream_features)
+    n = len(downstream_features)
+    d_model = sae_upstream.W_dec.size(1)
+
+    feature_vectors = sae_upstream.W_dec[upstream_features, :]  # (m, d_model)
+
+    batch_idx = 0
+    last_pos = inputs.shape[1] - 1
+
+    # Phase 1: run the full model without grad to get hidden states + position embeddings
+    if verbose:
+        print("running inference pass (no grad)")
+    position_embeddings = [None]
+
+    def capture_pos_emb(module, input, output):
+        """Capture position embeddings from first layer for reuse."""
+        # Gemma2DecoderLayer receives position_embeddings as a kwarg or positional arg
+        # We capture them from the input to the first layer after the model computes them
+        pass
+
+    with torch.no_grad():
+        outputs = model(inputs, output_hidden_states=True)
+        # Cache the hidden state at the upstream layer output
+        # hidden_states[0]=embedding, hidden_states[N+1]=layer N output
+        cached_upstream_hidden = outputs.hidden_states[upstream_layer_idx + 1].detach()
+
+        # Compute position embeddings for each attention type.
+        # Gemma 2/3 have sliding_attention and full_attention layers with different RoPE.
+        position_ids = torch.arange(inputs.shape[1], device=device).unsqueeze(0)
+        rotary_emb = model.model.rotary_emb
+        has_layer_types = isinstance(getattr(rotary_emb, 'rope_type', None), dict)
+
+        cached_pos_embs = {}
+        if has_layer_types:
+            for layer_idx in range(upstream_layer_idx + 1, downstream_layer_idx + 1):
+                attn_type = model.model.layers[layer_idx].attention_type
+                if attn_type not in cached_pos_embs:
+                    pe = rotary_emb(cached_upstream_hidden, position_ids, attn_type)
+                    cached_pos_embs[attn_type] = (pe[0].detach(), pe[1].detach())
+        else:
+            # Single RoPE config for all layers
+            pe = rotary_emb(cached_upstream_hidden, position_ids)
+            default_pe = (pe[0].detach(), pe[1].detach())
+
+        del outputs
+
+    # Phase 2: define the partial forward function (upstream -> downstream only)
+    def f(a_val: torch.Tensor) -> torch.Tensor:
+        """Partial forward: perturb cached upstream hidden state, run layers upstream..downstream."""
+        # Start from the cached upstream hidden state
+        h = cached_upstream_hidden.clone()
+
+        # Add the perturbation at the last token position
+        weighted = (
+            a_val.view(m, 1, 1) * feature_vectors.view(m, 1, d_model)
+        ).sum(dim=0)  # (1, d_model)
+        expanded = weighted.expand(h.size(0), -1, -1)
+        if h.dtype != expanded.dtype:
+            expanded = expanded.to(h.dtype)
+        h[:, -1:, :] += expanded
+
+        # Run only layers (upstream_layer_idx + 1) through downstream_layer_idx
+        for layer_idx in range(upstream_layer_idx + 1, downstream_layer_idx + 1):
+            layer = model.model.layers[layer_idx]
+            if has_layer_types:
+                pe = cached_pos_embs[layer.attention_type]
+            else:
+                pe = default_pe
+            layer_out = layer(h, position_embeddings=pe)
+            h = layer_out[0] if isinstance(layer_out, tuple) else layer_out
+
+        # Encode with downstream SAE
+        sae_acts = sae_downstream.encode(h.float())
+        return sae_acts[batch_idx, last_pos, downstream_features]  # (n,)
+
+    if verbose:
+        print(f"computing Jacobian over layers {upstream_layer_idx}→{downstream_layer_idx} "
+              f"(vectorize={vectorize})")
+
+    with torch.enable_grad():
+        a_zero = torch.zeros(m, device=device)
+        J = torch.autograd.functional.jacobian(f, a_zero, vectorize=vectorize)
+        gradient_matrix = J.detach()
+
+    gc.collect()
+    if device.type == "mps":
+        torch.mps.empty_cache()
+    if verbose:
+        print("done")
+    return gradient_matrix
+
+
+# ---------------------------------------------------------------------------
 # Batched gradient computation — one forward pass per upstream layer
 # ---------------------------------------------------------------------------
 
@@ -396,6 +527,9 @@ def compute_gradient_matrices_batch(
     model: AutoModelForCausalLM,
     verbose: bool = False,
     logit_token_ids: list[int] | None = None,
+    logit_token_ids_per_prompt: torch.Tensor | None = None,
+    prompt_signs: torch.Tensor | None = None,
+    attention_mask: torch.Tensor | None = None,
 ) -> tuple[list[torch.Tensor], torch.Tensor | None]:
     """Compute gradient matrices from one upstream layer to multiple downstream layers.
 
@@ -403,15 +537,29 @@ def compute_gradient_matrices_batch(
     gradients for each downstream layer from the shared computation graph.
     This is ~N times faster than N separate calls to compute_gradient_matrix.
 
+    When prompt_signs is provided, computes label-aligned gradients:
+        E_p[σ(p) * ∂f_downstream / ∂a]
+    where σ(p) = +1 for group A, -1 for group B. This prevents cancellation
+    of decision-relevant edges across contrastive prompt groups.
+
     Args:
-        inputs: Tokenized input (1, seq_len).
+        inputs: Tokenized input (batch_size, seq_len).
         upstream_layer_idx: Which layer to hook.
         downstream_pairs: List of (downstream_layer_idx, downstream_features_tensor).
         upstream_features: Feature indices in the upstream SAE.
         model: The language model.
         verbose: Print progress.
         logit_token_ids: Optional list of token IDs to compute logit gradients for
-            (e.g. Yes/No tokens). Returns a (len(logit_token_ids), n_upstream) matrix.
+            (e.g. Yes/No tokens). All prompts use the same token IDs.
+            Returns a (len(logit_token_ids), n_upstream) matrix.
+        logit_token_ids_per_prompt: Optional (n_slots, batch_size) tensor of token IDs
+            when each prompt needs different logit tokens (e.g. IOI where IO/S names
+            differ per prompt). Mutually exclusive with logit_token_ids.
+        prompt_signs: Optional (batch_size,) tensor of +1/-1 for label-aligned
+            averaging. If None, uses uniform weights (simple mean).
+        attention_mask: Optional (batch_size, seq_len) mask for padded inputs.
+            Required when prompts have different token lengths (i.e. padding
+            exists). 1 = real token, 0 = pad token.
 
     Returns:
         Tuple of (list of gradient matrices, logit gradient matrix or None).
@@ -453,14 +601,34 @@ def compute_gradient_matrices_batch(
         hook = model.model.layers[upstream_layer_idx].register_forward_hook(
             modify_residual_activations
         )
-        outputs = model(inputs, output_hidden_states=True)
+        model_kwargs = dict(output_hidden_states=True)
+        if attention_mask is not None:
+            model_kwargs["attention_mask"] = attention_mask
+        outputs = model(inputs, **model_kwargs)
         hook.remove()
 
         hidden_states = outputs.hidden_states
         last_pos = inputs.shape[1] - 1  # last token position
 
+        # Safety: if batching with padding but no attention_mask, the model
+        # will attend to pad tokens and corrupt hidden states.
+        if inputs.shape[0] > 1:
+            pad_token_id = 0  # Gemma pad token
+            has_padding = (inputs == pad_token_id).any()
+            if has_padding and attention_mask is None:
+                assert False, (
+                    f"Padding detected in input but no attention_mask provided! "
+                    f"The model will attend to pad tokens, corrupting hidden states. "
+                    f"Pass attention_mask from the tokenizer output."
+                )
+
         results = []
-        n_logit_grads = len(logit_token_ids) if logit_token_ids else 0
+        if logit_token_ids_per_prompt is not None:
+            n_logit_grads = logit_token_ids_per_prompt.shape[0]
+        elif logit_token_ids:
+            n_logit_grads = len(logit_token_ids)
+        else:
+            n_logit_grads = 0
         total_grads = sum(len(df) for _, df in downstream_pairs) + n_logit_grads
         grad_done = 0
 
@@ -470,7 +638,10 @@ def compute_gradient_matrices_batch(
             sae_acts = sae_downstream.encode(act_downstream.float())
 
             n = len(down_features)
-            features_downstream = sae_acts[0, last_pos, down_features]  # last token
+            raw = sae_acts[:, last_pos, down_features]  # (batch, n)
+            if prompt_signs is not None:
+                raw = raw * prompt_signs.view(-1, 1)
+            features_downstream = raw.mean(dim=0)  # (n,) label-aligned or simple mean
 
             gradient_matrix = torch.zeros(n, m, device=device)
 
@@ -494,10 +665,46 @@ def compute_gradient_matrices_batch(
 
         # Compute logit gradients: how upstream features influence specific output logits
         logit_grad_matrix = None
-        if logit_token_ids:
-            # Use logits at the last token position (prediction position)
+        if logit_token_ids_per_prompt is not None:
+            # Per-prompt token IDs: each prompt has different logit targets
+            # logit_token_ids_per_prompt shape: (n_slots, batch_size)
             last_pos = inputs.shape[1] - 1
-            logits = outputs.logits[0, last_pos, :]  # (vocab_size,)
+            raw_logits = outputs.logits[:, last_pos, :]  # (batch, vocab_size)
+            batch_size = raw_logits.shape[0]
+            batch_arange = torch.arange(batch_size, device=device)
+
+            logit_grad_matrix = torch.zeros(n_logit_grads, m, device=device)
+            for slot_idx in range(n_logit_grads):
+                token_ids_for_slot = logit_token_ids_per_prompt[slot_idx]  # (batch_size,)
+                per_prompt_logits = raw_logits[batch_arange, token_ids_for_slot]  # (batch,)
+                if prompt_signs is not None:
+                    per_prompt_logits = per_prompt_logits * prompt_signs
+                scalar = per_prompt_logits.mean()
+
+                grad_done += 1
+                is_last = (grad_done == total_grads)
+                (grad,) = torch.autograd.grad(
+                    scalar,
+                    a,
+                    retain_graph=not is_last,
+                    allow_unused=True,
+                )
+                if grad is not None:
+                    logit_grad_matrix[slot_idx, :] = grad.detach()
+
+            if verbose:
+                for slot_idx in range(n_logit_grads):
+                    row = logit_grad_matrix[slot_idx]
+                    print(f"    -> Logit slot {slot_idx}: max={row.abs().max():.4f}, "
+                          f"nonzero={row.count_nonzero()}/{row.numel()}")
+
+        elif logit_token_ids:
+            # Uniform token IDs: all prompts use the same logit targets
+            last_pos = inputs.shape[1] - 1
+            raw_logits = outputs.logits[:, last_pos, :]  # (batch, vocab_size)
+            if prompt_signs is not None:
+                raw_logits = raw_logits * prompt_signs.view(-1, 1)
+            logits = raw_logits.mean(dim=0)  # (vocab_size,) label-aligned or simple mean
 
             logit_grad_matrix = torch.zeros(n_logit_grads, m, device=device)
             for t_idx, token_id in enumerate(logit_token_ids):
@@ -523,102 +730,6 @@ def compute_gradient_matrices_batch(
         torch.mps.empty_cache()
     return results, logit_grad_matrix
 
-
-# ---------------------------------------------------------------------------
-# Token attribution — ∂(feature_act) / ∂(embedding_perturbation)
-# ---------------------------------------------------------------------------
-
-
-def compute_token_gradients(
-    inputs: torch.Tensor,
-    activated_features: list[torch.Tensor],
-    model: AutoModelForCausalLM,
-    n_features: int = 50,
-    verbose: bool = False,
-) -> dict[int, torch.Tensor]:
-    """Compute how much each input token contributes to each SAE feature activation.
-
-    Uses a multiplicative perturbation at the embedding level:
-        output = embedding * (1 + a)
-    where a is a (seq_len,) vector of learnable scalars. The gradient
-    ∂(feature_act[feat, last_pos]) / ∂(a[t]) measures how much token t
-    contributes to each feature's activation at the prediction position.
-
-    Args:
-        inputs: Tokenized input (1, seq_len).
-        activated_features: Feature IDs per layer (list of 1D tensors).
-        model: The language model.
-        n_features: Max features per layer.
-        verbose: Print progress.
-
-    Returns:
-        Dict mapping layer_idx -> (n_features_in_layer, seq_len) gradient tensor.
-    """
-    device = next(model.parameters()).device
-    seq_len = inputs.shape[1]
-    num_layers = min(model.config.num_hidden_layers, MAX_SAE_LAYER + 1)
-
-    gc.collect()
-    if device.type == "mps":
-        torch.mps.empty_cache()
-
-    with torch.enable_grad():
-        a = torch.zeros(seq_len, requires_grad=True, device=device)
-
-        def hook_embeddings(module, input, output):
-            return output * (1 + a.view(1, seq_len, 1))
-
-        hook = model.model.embed_tokens.register_forward_hook(hook_embeddings)
-        outputs = model(inputs, output_hidden_states=True)
-        hook.remove()
-
-        hidden_states = outputs.hidden_states
-        last_pos = inputs.shape[1] - 1
-
-        # Count total grads for retain_graph management
-        total_grads = sum(
-            min(n_features, len(activated_features[layer]))
-            for layer in range(num_layers)
-        )
-        grad_done = 0
-
-        token_grads: dict[int, torch.Tensor] = {}
-
-        for layer in range(num_layers):
-            feats = activated_features[layer][:n_features]
-            n = len(feats)
-            if n == 0:
-                continue
-
-            sae = load_sae(canonical_sae_filenames[layer], device)
-            sae_acts = sae.encode(hidden_states[layer + 1].float())
-            feat_acts = sae_acts[0, last_pos, feats]  # (n,)
-
-            grad_matrix = torch.zeros(n, seq_len, device=device)
-
-            for i in range(n):
-                grad_done += 1
-                is_last = (grad_done == total_grads)
-                (grad,) = torch.autograd.grad(
-                    feat_acts[i],
-                    a,
-                    retain_graph=not is_last,
-                    allow_unused=True,
-                )
-                if grad is not None:
-                    grad_matrix[i, :] = grad.detach()
-
-            token_grads[layer] = grad_matrix
-
-            if verbose:
-                print(f"  Token grads L{layer}: max={grad_matrix.abs().max():.4f}, "
-                      f"nonzero={grad_matrix.count_nonzero()}/{grad_matrix.numel()}")
-
-    gc.collect()
-    if device.type == "mps":
-        torch.mps.empty_cache()
-
-    return token_grads
 
 
 # ---------------------------------------------------------------------------

@@ -37,7 +37,9 @@
       "Bash(PYTHONPATH=/Users/hannes/Desktop/feature-circuit-discovery .venv/bin/python:*)",
       "Bash(kill:*)",
       "Bash(vm_stat:*)",
-      "Bash(PYTHONPATH=. .venv/bin/python:*)"
+      "Bash(PYTHONPATH=. .venv/bin/python:*)",
+      "Bash(/Users/hannes/Desktop/feature-circuit-discovery/.venv/bin/pip install:*)",
+      "Bash(PYTHONPATH=. python tests/test_jacobian_vs_loop.py)"
     ]
   }
 }

@@ -28,7 +28,6 @@ set_model("gemma-2-2b")
 
 from experiments.feature_grad_exp_optimized import (
     compute_gradient_matrices_batch,
-    compute_token_gradients,
     get_contrastive_features,
     load_sae,
     _sae_cache,
@@ -138,14 +137,20 @@ if __name__ == "__main__":
     num_layers = min(model.config.num_hidden_layers, MAX_SAE_LAYER + 1)
     print(f"Model layers: {model.config.num_hidden_layers}, using {num_layers} (SAE coverage)")
 
-    # Representative prompt: use a Bucket C prompt (ones-digit decides)
-    # This forces the model to process all three digit positions
-    representative_prompt = prompts_yes[8]  # first Bucket C Yes prompt
-    print(f"\nRepresentative prompt: {repr(representative_prompt)}")
+    # Batch all prompts for gradient computation (label-aligned averaging)
+    all_prompts = prompts_yes + prompts_no
+    inputs = tokenizer(
+        all_prompts, return_tensors="pt", add_special_tokens=True, padding=True
+    ).input_ids.to(device)
 
-    inputs = tokenizer.encode(
-        representative_prompt, return_tensors="pt", add_special_tokens=True
-    ).to(device)
+    # Label-aligned signs: +1 for Yes, -1 for No
+    # Prevents cancellation of decision-relevant edges across groups
+    prompt_signs = torch.cat([
+        torch.ones(len(prompts_yes), device=device),
+        -torch.ones(len(prompts_no), device=device),
+    ])
+    print(f"\nGradient input: {len(all_prompts)} prompts, shape {tuple(inputs.shape)}")
+    print(f"Label-aligned: {len(prompts_yes)} Yes (+1), {len(prompts_no)} No (-1)")
 
     # Get contrastive features — Yes vs No
     print("\nFinding contrastive features (Yes vs No)...")
@@ -153,15 +158,6 @@ if __name__ == "__main__":
         prompts_yes, prompts_no, tokenizer, model, device, n_features=N_FEATURES,
     )
     print(f"Features per layer (first 5): {[len(f) for f in activated_features[:5]]}")
-
-    # Token attribution: which input tokens drive each SAE feature?
-    print("\nComputing token attribution gradients...")
-    token_gradients = compute_token_gradients(
-        inputs, activated_features, model, n_features=N_FEATURES, verbose=True,
-    )
-    input_token_ids = inputs[0].cpu().tolist()
-    input_token_labels = [tokenizer.decode([tid]) for tid in input_token_ids]
-    print(f"Token labels: {input_token_labels}")
 
     # Logit attribution: track Yes and No tokens
     yes_token_id = tokenizer.encode("Yes", add_special_tokens=False)[0]
@@ -200,7 +196,7 @@ if __name__ == "__main__":
         t0 = time.time()
         batch_results, logit_grad_matrix = compute_gradient_matrices_batch(
             inputs, up_layer, downstream_pairs, up_feats, model, verbose=True,
-            logit_token_ids=logit_token_ids,
+            logit_token_ids=logit_token_ids, prompt_signs=prompt_signs,
         )
         elapsed = time.time() - t0
 
@@ -228,16 +224,15 @@ if __name__ == "__main__":
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     json_path = f"results/comparison_gemma2_2b_{timestamp}.json"
 
-    all_prompts = prompts_yes + prompts_no
     metadata = {
         "model": MODEL_ID,
         "sae_repo": "google/gemma-scope-2b-pt-res",
         "prompts": all_prompts,
         "n_features_per_layer": N_FEATURES,
         "feature_selection": "contrastive (|mean_act_yes - mean_act_no|)",
+        "gradient_method": f"label-aligned average over {len(all_prompts)} prompts (Yes=+1, No=-1)",
         "yes_prompts": prompts_yes,
         "no_prompts": prompts_no,
-        "representative_prompt": representative_prompt,
         "device": str(device),
         "dtype": dtype_str,
         "timestamp": datetime.now().isoformat(),
@@ -250,9 +245,6 @@ if __name__ == "__main__":
         logit_gradients=logit_gradients,
         logit_token_labels=logit_token_labels,
         logit_token_ids=logit_token_ids,
-        token_gradients=token_gradients,
-        token_labels=input_token_labels,
-        token_ids=input_token_ids,
     )
 
     print(f"Generating HTML visualizer...")

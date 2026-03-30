@@ -22,7 +22,6 @@ set_model("gemma-2-2b")
 
 from experiments.feature_grad_exp_optimized import (
     compute_gradient_matrices_batch,
-    compute_token_gradients,
     get_contrastive_features,
     load_sae,
     _sae_cache,
@@ -103,10 +102,20 @@ if __name__ == "__main__":
     num_layers = min(model.config.num_hidden_layers, MAX_SAE_LAYER + 1)
     print(f"Model layers: {model.config.num_hidden_layers}, using {num_layers} (SAE coverage)")
 
-    # Use first addition prompt for gradient computation
-    inputs = tokenizer.encode(
-        prompts_add[0], return_tensors="pt", add_special_tokens=True
-    ).to(device)
+    # Batch all prompts for gradient computation (label-aligned averaging)
+    all_prompts_grad = prompts_add + prompts_sub
+    inputs = tokenizer(
+        all_prompts_grad, return_tensors="pt", add_special_tokens=True, padding=True
+    ).input_ids.to(device)
+
+    # Label-aligned signs: +1 for addition, -1 for subtraction
+    # Prevents cancellation of addition-specific edges
+    prompt_signs = torch.cat([
+        torch.ones(len(prompts_add), device=device),
+        -torch.ones(len(prompts_sub), device=device),
+    ])
+    print(f"\nGradient input: {len(all_prompts_grad)} prompts, shape {tuple(inputs.shape)}")
+    print(f"Label-aligned: {len(prompts_add)} add (+1), {len(prompts_sub)} sub (-1)")
 
     # Get contrastive features — addition vs subtraction
     print("\nFinding contrastive features (addition vs subtraction)...")
@@ -114,15 +123,6 @@ if __name__ == "__main__":
         prompts_add, prompts_sub, tokenizer, model, device, n_features=N_FEATURES,
     )
     print(f"Features per layer (first 5): {[len(f) for f in activated_features[:5]]}")
-
-    # Token attribution: which input tokens drive each SAE feature?
-    print("\nComputing token attribution gradients...")
-    token_gradients = compute_token_gradients(
-        inputs, activated_features, model, n_features=N_FEATURES, verbose=True,
-    )
-    input_token_ids = inputs[0].cpu().tolist()
-    input_token_labels = [tokenizer.decode([tid]) for tid in input_token_ids]
-    print(f"Token labels: {input_token_labels}")
 
     # Logit attribution: track all 10 digit tokens (0-9) at TWO positions:
     #   Position 1 (d1): after "=" — which tens-digit does the model predict?
@@ -178,7 +178,7 @@ if __name__ == "__main__":
         t0 = time.time()
         batch_results, logit_grad_matrix = compute_gradient_matrices_batch(
             inputs, up_layer, downstream_pairs, up_feats, model, verbose=True,
-            logit_token_ids=logit_token_ids,
+            logit_token_ids=logit_token_ids, prompt_signs=prompt_signs,
         )
         elapsed = time.time() - t0
 
@@ -270,6 +270,8 @@ if __name__ == "__main__":
         "prompts": all_prompts,
         "n_features_per_layer": N_FEATURES,
         "feature_selection": "contrastive (|mean_act_addition - mean_act_subtraction|)",
+        "gradient_prompts_d1": f"label-aligned average over {len(all_prompts_grad)} prompts (add=+1, sub=-1)",
+        "gradient_prompts_d2": "single prompt (first addition + first digit)",
         "addition_prompts": prompts_add,
         "subtraction_prompts": prompts_sub,
         "device": str(device),
@@ -284,9 +286,6 @@ if __name__ == "__main__":
         logit_gradients=merged_logit_gradients,
         logit_token_labels=merged_logit_labels,
         logit_token_ids=merged_logit_token_ids,
-        token_gradients=token_gradients,
-        token_labels=input_token_labels,
-        token_ids=input_token_ids,
     )
 
     print(f"Generating HTML visualizer...")

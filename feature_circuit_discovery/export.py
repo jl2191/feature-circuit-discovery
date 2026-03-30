@@ -17,9 +17,6 @@ def export_circuit_json(
     logit_gradients: dict[int, torch.Tensor] | None = None,
     logit_token_labels: list[str] | None = None,
     logit_token_ids: list[int] | None = None,
-    token_gradients: dict[int, torch.Tensor] | None = None,
-    token_labels: list[str] | None = None,
-    token_ids: list[int] | None = None,
 ) -> Path:
     """Serialize circuit discovery results to JSON.
 
@@ -33,9 +30,6 @@ def export_circuit_json(
         logit_gradients: Optional dict mapping upstream_layer -> (n_tokens, n_feats) tensor.
         logit_token_labels: Optional list of token label strings (e.g. [" Yes", " No"]).
         logit_token_ids: Optional list of token IDs corresponding to labels.
-        token_gradients: Optional dict mapping layer_idx -> (n_features, seq_len) tensor.
-        token_labels: Optional list of input token strings.
-        token_ids: Optional list of input token IDs.
 
     Returns:
         Path to the written JSON file.
@@ -112,27 +106,6 @@ def export_circuit_json(
             "gradients_by_layer": gradients_by_layer,
         }
 
-    # Build token_nodes section if token gradients were computed
-    token_nodes_data = None
-    if token_gradients and token_labels and token_ids:
-        tok_gradients_by_layer = {}
-        for layer_idx, grad_tensor in token_gradients.items():
-            mat = grad_tensor.cpu()
-            n_feats = mat.shape[0]
-            down_feats = activated_features[layer_idx][:n_feats].cpu().tolist()
-            tok_gradients_by_layer[str(layer_idx)] = {
-                "downstream_feature_ids": down_feats,
-                "gradients": [
-                    [round(float(mat[f, t]), 6) for t in range(mat.shape[1])]
-                    for f in range(n_feats)
-                ],
-            }
-        token_nodes_data = {
-            "tokens": token_labels,
-            "token_ids": token_ids,
-            "gradients_by_layer": tok_gradients_by_layer,
-        }
-
     meta_out = {
             "model": metadata.get("model", "google/gemma-3-1b-pt"),
             "sae_repo": metadata.get("sae_repo", "google/gemma-scope-2-1b-pt"),
@@ -156,9 +129,6 @@ def export_circuit_json(
 
     if logit_nodes_data:
         data["logit_nodes"] = logit_nodes_data
-
-    if token_nodes_data:
-        data["token_nodes"] = token_nodes_data
 
     with open(output_path, "w") as f:
         json.dump(data, f, indent=2)
@@ -288,7 +258,8 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
     position: fixed; background: #16213e; border: 1px solid #0f3460;
     border-radius: 6px; padding: 8px 12px; font-size: 12px;
     pointer-events: auto; display: none; z-index: 100;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.4); max-width: 350px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4); max-width: 450px;
+    max-height: 500px; overflow-y: auto;
   }
   #tooltip a { pointer-events: auto; }
   #tooltip .tl { color: #888; }
@@ -362,11 +333,6 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
     <input type="range" id="threshold-slider" min="0" max="100" value="10" step="1">
   </div>
 
-  <div class="control-group" id="token-threshold-group" style="display:none;">
-    <label>Token Edge Threshold: <span id="token-threshold-value"></span></label>
-    <input type="range" id="token-threshold-slider" min="0" max="100" value="10" step="1">
-  </div>
-
   <div class="section-label">Layout Forces</div>
 
   <div class="control-group">
@@ -408,10 +374,6 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
     <div class="legend-item">
       <div class="legend-swatch" style="background: #e94560; height: 10px; width: 10px; border-radius: 50%;"></div>
       <span>Logit attribution node</span>
-    </div>
-    <div class="legend-item">
-      <div class="legend-swatch" style="background: #51cf66; height: 10px; width: 10px; border-radius: 2px;"></div>
-      <span>Input token node</span>
     </div>
     <div class="legend-item">
       <span style="color:#888;">Node size = ranking score &middot; Click node to trace &middot; Drag to reposition</span>
@@ -547,66 +509,6 @@ function initData(data) {
     allFeatures.forEach(f => { f.logitScore = featureLogitScore[f.key] || 0; });
   }
 
-  // Parse token nodes (input token attribution)
-  DATA._tokenNodes = [];
-  DATA._tokenEdges = [];
-  DATA._tokenMaxAbs = 0;
-  if (DATA.token_nodes) {
-    const tn = DATA.token_nodes;
-    tn.tokens.forEach((label, tIdx) => {
-      DATA._tokenNodes.push({
-        key: "token:" + tIdx,
-        layer: "token",
-        id: tn.token_ids[tIdx],
-        label: label,
-        tIdx: tIdx,
-        isTokenNode: true,
-        gradScore: 0,
-        freq: 0,
-      });
-    });
-    // Build token edges: from token nodes to downstream feature nodes
-    Object.keys(tn.gradients_by_layer).forEach(layerStr => {
-      const layerData = tn.gradients_by_layer[layerStr];
-      const downLayer = parseInt(layerStr);
-      layerData.downstream_feature_ids.forEach((did, fIdx) => {
-        tn.tokens.forEach((label, tIdx) => {
-          const val = layerData.gradients[fIdx][tIdx];
-          DATA._tokenEdges.push({
-            uKey: "token:" + tIdx,
-            dKey: downLayer + ":" + did,
-            uLayer: "token",
-            uId: tn.token_ids[tIdx],
-            uLabel: label,
-            dLayer: downLayer,
-            dId: did,
-            value: val,
-            isTokenEdge: true,
-          });
-          if (Math.abs(val) > DATA._tokenMaxAbs) DATA._tokenMaxAbs = Math.abs(val);
-        });
-      });
-    });
-    // Compute total |gradient| for each token node
-    DATA._tokenNodes.forEach(node => {
-      let total = 0;
-      DATA._tokenEdges.forEach(e => {
-        if (e.uKey === node.key) total += Math.abs(e.value);
-      });
-      node.gradScore = total;
-    });
-    // Compute per-feature token grad score
-    DATA._tokenEdges.forEach(e => {
-      const fKey = e.dKey;
-      const feat = allFeatures.find(f => f.key === fKey);
-      if (feat) feat.tokenScore = (feat.tokenScore || 0) + Math.abs(e.value);
-    });
-    // Show token threshold slider
-    document.getElementById("token-threshold-group").style.display = "";
-  } else {
-    document.getElementById("token-threshold-group").style.display = "none";
-  }
-
   const meta = DATA.metadata || {};
   document.getElementById("metadata").innerHTML =
     `<b>Model:</b> ${meta.model || "?"}<br>` +
@@ -655,17 +557,60 @@ function npApiUrl(layer, featureId) {
   return `https://www.neuronpedia.org/api/feature/${npConfig.npModel}/${layer}-${npConfig.scope}/${featureId}`;
 }
 
-function buildNodeTooltipHTML(d, description) {
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function renderActivationSnippet(ex) {
+  const idx = ex.maxValueTokenIndex;
+  const w = 5;
+  const start = Math.max(0, idx - w);
+  const end = Math.min(ex.tokens.length, idx + w + 1);
+  let html = '';
+  if (start > 0) html += '<span style="color:#555;">...</span>';
+  for (let i = start; i < end; i++) {
+    const tok = escapeHtml(ex.tokens[i]);
+    if (i === idx) {
+      html += '<span style="background:#e94560;color:#fff;padding:0 1px;border-radius:2px;">' + tok + '</span>';
+    } else if (ex.values[i] > 0) {
+      const op = (Math.min(ex.values[i] / ex.maxValue, 1) * 0.5).toFixed(2);
+      html += '<span style="background:rgba(77,171,247,' + op + ');">' + tok + '</span>';
+    } else {
+      html += '<span style="color:#888;">' + tok + '</span>';
+    }
+  }
+  if (end < ex.tokens.length) html += '<span style="color:#555;">...</span>';
+  return html;
+}
+
+function buildNodeTooltipHTML(d, featureData) {
   const score = nodeScore(d);
   const scoreLabel = currentMode === "logit" ? "Logit |grad|" : currentMode === "gradient" ? "Total |grad|" : "Activation freq";
   let html =
     `<span class="tl">Layer ${d.layer} Feature</span> <span class="tv">#${d.id}</span><br>` +
     `<span class="tl">${scoreLabel}:</span> <span class="tv">${score.toFixed(4)}</span>`;
   if (npHasLayer(d.layer)) {
-    if (description === undefined) {
-      html += `<br><span class="tl" style="font-style:italic;">Loading description...</span>`;
-    } else if (description) {
-      html += `<br><span class="tl">Description:</span> <span style="color:#a0c4ff;font-style:italic;">"${description}"</span>`;
+    if (featureData === undefined) {
+      html += `<br><span class="tl" style="font-style:italic;">Loading...</span>`;
+    } else if (featureData) {
+      if (featureData.desc) {
+        html += `<br><span class="tl">Desc:</span> <span style="color:#a0c4ff;font-style:italic;">"${escapeHtml(featureData.desc)}"</span>`;
+      }
+      if (featureData.pos_str && featureData.pos_str.length > 0) {
+        html += '<br><span class="tl">Promotes:</span> ' + featureData.pos_str.slice(0,5).map(s => '<span style="color:#4dabf7;">"' + escapeHtml(s) + '"</span>').join(' ');
+      }
+      if (featureData.neg_str && featureData.neg_str.length > 0) {
+        html += '<br><span class="tl">Suppresses:</span> ' + featureData.neg_str.slice(0,5).map(s => '<span style="color:#ff6b6b;">"' + escapeHtml(s) + '"</span>').join(' ');
+      }
+      if (featureData.frac_nonzero != null) {
+        html += `<br><span class="tl">Fires on:</span> <span class="tv">${(featureData.frac_nonzero * 100).toFixed(3)}%</span> <span class="tl">of tokens</span>`;
+      }
+      if (featureData.examples && featureData.examples.length > 0) {
+        html += '<br><span class="tl">Top activations:</span>';
+        featureData.examples.forEach(ex => {
+          html += '<div style="margin:2px 0;padding:2px 4px;background:#111;border-radius:3px;font-size:10px;line-height:1.3;font-family:monospace;white-space:pre-wrap;word-break:break-all;">' + renderActivationSnippet(ex) + '</div>';
+        });
+      }
     }
     html += `<br><a href="${npFeatureUrl(d.layer, d.id)}" target="_blank" style="color:#4dabf7;text-decoration:none;font-size:11px;">Neuronpedia &#8599;</a>`;
   }
@@ -674,15 +619,30 @@ function buildNodeTooltipHTML(d, description) {
 
 function fetchAndShowDescription(d) {
   const key = d.layer + ":" + d.id;
-  if (key in descCache) return;  // already cached, tooltip was built with it
+  if (key in descCache) return;
   if (!npHasLayer(d.layer)) { descCache[key] = null; return; }
   descCache[key] = undefined;  // mark as loading
   fetch(npApiUrl(d.layer, d.id))
     .then(r => r.ok ? r.json() : null)
     .then(data => {
-      descCache[key] = (data && data.explanations && data.explanations.length > 0)
-        ? (data.explanations[0].description || null) : null;
-      // Update tooltip if still hovering this node
+      if (!data) { descCache[key] = null; }
+      else {
+        const expl = data.explanations || [];
+        descCache[key] = {
+          desc: expl.length > 0 ? (expl[0].description || null) : null,
+          pos_str: (data.pos_str || []).slice(0, 10),
+          pos_values: (data.pos_values || []).slice(0, 10),
+          neg_str: (data.neg_str || []).slice(0, 10),
+          neg_values: (data.neg_values || []).slice(0, 10),
+          frac_nonzero: data.frac_nonzero,
+          examples: (data.activations || []).slice(0, 3).map(act => ({
+            tokens: act.tokens || [],
+            values: act.values || [],
+            maxValueTokenIndex: act.maxValueTokenIndex || 0,
+            maxValue: act.maxValue || 1,
+          })),
+        };
+      }
       if (hoveredNodeKey === key) {
         tooltip.innerHTML = buildNodeTooltipHTML(d, descCache[key]);
       }
@@ -714,7 +674,6 @@ const thresholdSlider = document.getElementById("threshold-slider");
 const chargeSlider = document.getElementById("charge-slider");
 const linkDistSlider = document.getElementById("link-dist-slider");
 const opacitySlider = document.getElementById("opacity-slider");
-const tokenThresholdSlider = document.getElementById("token-threshold-slider");
 const tooltip = document.getElementById("tooltip");
 
 // --- SVG setup with zoom ---
@@ -750,7 +709,6 @@ topnSlider.addEventListener("input", () => { selectedNode = null; rebuildGraph()
 rankMode.addEventListener("change", () => { selectedNode = null; rebuildGraph(); });
 maxDistSelect.addEventListener("change", () => { selectedNode = null; rebuildGraph(); });
 thresholdSlider.addEventListener("input", rebuildGraph);
-tokenThresholdSlider.addEventListener("input", rebuildGraph);
 
 chargeSlider.addEventListener("input", function() {
   document.getElementById("charge-value").textContent = this.value;
@@ -809,14 +767,6 @@ function rebuildGraph() {
   document.getElementById("topn-group").style.display = selectionMode === "topn" ? "" : "none";
   document.getElementById("rank-group").style.display = selectionMode === "topn" ? "" : "none";
 
-  const hasToken = DATA._tokenNodes && DATA._tokenNodes.length > 0;
-  const tokenThreshPct = +tokenThresholdSlider.value;
-  const tokenThreshold = (hasToken && tokenThreshPct > 0)
-    ? DATA._tokenMaxAbs * Math.pow(tokenThreshPct / 100, 3) : 0;
-  if (hasToken) {
-    document.getElementById("token-threshold-value").textContent = tokenThreshold.toFixed(4);
-  }
-
   let selected, selectedKeys;
   const edges = [];
   let globalMaxEdge = 0;
@@ -855,15 +805,6 @@ function rebuildGraph() {
         }
       });
     }
-    if (hasToken) {
-      DATA._tokenEdges.forEach(e => {
-        if (!selectedKeys.has(e.dKey)) return;
-        if (Math.abs(e.value) >= tokenThreshold) {
-          edges.push(e);
-          if (Math.abs(e.value) > globalMaxEdge) globalMaxEdge = Math.abs(e.value);
-        }
-      });
-    }
   } else {
     // --- Edge threshold mode: find all edges above threshold, derive nodes ---
     selectedKeys = new Set();
@@ -895,15 +836,6 @@ function rebuildGraph() {
         }
       });
     }
-    if (hasToken) {
-      DATA._tokenEdges.forEach(e => {
-        if (Math.abs(e.value) >= tokenThreshold) {
-          edges.push(e);
-          selectedKeys.add(e.dKey);
-          if (Math.abs(e.value) > globalMaxEdge) globalMaxEdge = Math.abs(e.value);
-        }
-      });
-    }
     // Build selected feature list from edge endpoints
     const featureByKey = {};
     allFeatures.forEach(f => { featureByKey[f.key] = f; });
@@ -930,25 +862,21 @@ function rebuildGraph() {
     `<span class="sl">Visible edges:</span> <span class="sv">${edges.length}</span><br>` +
     `<span class="sl">Per layer:</span> <span style="color:#aaa;font-size:11px;">${layerCounts}</span>`;
 
-  // Compute fixed x positions per layer column (token + layers + logit)
+  // Compute fixed x positions per layer column (layers + logit)
   const w = container.clientWidth;
   const h = container.clientHeight;
   const marginX = 60;
-  const tokenCols = hasToken ? 1 : 0;
-  const totalCols = tokenCols + activeLayers.length + (hasLogit ? 1 : 0);
+  const totalCols = activeLayers.length + (hasLogit ? 1 : 0);
   const colSpacing = totalCols > 1
     ? (w - 2 * marginX) / (totalCols - 1)
     : 0;
 
   layerXPositions = {};
-  if (hasToken) {
-    layerXPositions["token"] = marginX;
-  }
   activeLayers.forEach((layerIdx, colIdx) => {
-    layerXPositions[layerIdx] = marginX + (tokenCols + colIdx) * colSpacing;
+    layerXPositions[layerIdx] = marginX + colIdx * colSpacing;
   });
   if (hasLogit) {
-    layerXPositions["logit"] = marginX + (tokenCols + activeLayers.length) * colSpacing;
+    layerXPositions["logit"] = marginX + activeLayers.length * colSpacing;
   }
 
   maxScore = selected.length > 0
@@ -971,32 +899,20 @@ function rebuildGraph() {
     };
   });
 
-  // Add token nodes (always visible, leftmost column)
-  if (hasToken) {
-    const tokenX = layerXPositions["token"];
-    DATA._tokenNodes.forEach((tn, idx) => {
-      const old = oldPosMap[tn.key];
-      currentNodes.push({
-        ...tn,
-        targetX: tokenX,
-        fx: tokenX,
-        x: tokenX,
-        y: old ? old.y : h / 2 + (idx - (DATA._tokenNodes.length - 1) / 2) * 40,
-      });
-    });
-  }
-
-  // Add logit nodes (always visible, not subject to top-N)
+  // Add logit nodes (always visible, not subject to top-N, fixed y positions)
   if (hasLogit) {
     const logitX = layerXPositions["logit"];
+    const logitSpacing = 60;
     DATA._logitNodes.forEach((ln, idx) => {
-      const old = oldPosMap[ln.key];
+      const fixedY = h / 2 + (idx - (DATA._logitNodes.length - 1) / 2) * logitSpacing;
       currentNodes.push({
         ...ln,
         targetX: logitX,
+        targetY: fixedY,
         fx: logitX,
+        fy: fixedY,
         x: logitX,
-        y: old ? old.y : h / 2 + (idx - (DATA._logitNodes.length - 1) / 2) * 60,
+        y: fixedY,
       });
     });
   }
@@ -1020,7 +936,6 @@ function rebuildGraph() {
     .force("link", d3.forceLink(links).distance(linkDist).strength(0.1))
     .force("charge", d3.forceManyBody().strength(chargeStrength))
     .force("collide", d3.forceCollide().radius(d => {
-      if (d.isTokenNode) return 18;
       if (d.isLogitNode) return 16;
       return 6 + 8 * (nodeScore(d) / (maxScore || 1));
     }))
@@ -1030,18 +945,6 @@ function rebuildGraph() {
 
   // --- Draw layer guide lines ---
   gLabels.selectAll("*").remove();
-  if (hasToken) {
-    const x = layerXPositions["token"];
-    gLabels.append("line")
-      .attr("class", "layer-line")
-      .attr("x1", x).attr("x2", x)
-      .attr("y1", -2000).attr("y2", 4000);
-    gLabels.append("text")
-      .attr("class", "layer-label")
-      .attr("x", x).attr("y", 20)
-      .attr("text-anchor", "middle")
-      .text("Input");
-  }
   activeLayers.forEach(layerIdx => {
     const x = layerXPositions[layerIdx];
     gLabels.append("line")
@@ -1081,9 +984,7 @@ function rebuildGraph() {
     .on("mouseover", function(event, d) {
       if (pinnedTooltip) return;
       tooltip.style.display = "block";
-      const fromLabel = d.isTokenEdge
-        ? `Token "${d.uLabel}"`
-        : `L${d.uLayer} #${d.uId}`;
+      const fromLabel = `L${d.uLayer} #${d.uId}`;
       const toLabel = d.isLogitEdge
         ? `Logit "${d.dLabel}"`
         : `L${d.dLayer} #${d.dId}`;
@@ -1111,38 +1012,25 @@ function rebuildGraph() {
 
   const nodeEnter = nodeSelection.enter().append("g").attr("class", "node");
 
-  // Token nodes get squares, others get circles
-  nodeEnter.each(function(d) {
-    const g = d3.select(this);
-    if (d.isTokenNode) {
-      g.append("rect")
-        .attr("x", -12).attr("y", -12)
-        .attr("width", 24).attr("height", 24)
-        .attr("rx", 3).attr("ry", 3)
-        .attr("fill", "#51cf66");
-    } else {
-      g.append("circle")
-        .attr("r", d.isLogitNode ? 12 : 4 + 6 * (nodeScore(d) / (maxScore || 1)))
-        .attr("fill", () => {
-          if (d.isLogitNode) return "#e94560";
-          const t = activeLayers.length > 1
-            ? activeLayers.indexOf(d.layer) / (activeLayers.length - 1) : 0.5;
-          return d3.interpolateRdYlBu(1 - t);
-        });
-    }
-  });
+  nodeEnter.append("circle")
+    .attr("r", d => d.isLogitNode ? 12 : 4 + 6 * (nodeScore(d) / (maxScore || 1)))
+    .attr("fill", d => {
+      if (d.isLogitNode) return "#e94560";
+      const t = activeLayers.length > 1
+        ? activeLayers.indexOf(d.layer) / (activeLayers.length - 1) : 0.5;
+      return d3.interpolateRdYlBu(1 - t);
+    });
 
   nodeEnter.append("text")
     .attr("dy", d => {
-      if (d.isTokenNode) return -16;
       if (d.isLogitNode) return -16;
       return -(6 + 6 * (nodeScore(d) / (maxScore || 1))) - 2;
     })
     .attr("text-anchor", "middle")
-    .attr("font-weight", d => (d.isLogitNode || d.isTokenNode) ? "bold" : "normal")
-    .attr("font-size", d => (d.isLogitNode || d.isTokenNode) ? "12px" : "9px")
-    .attr("fill", d => d.isTokenNode ? "#51cf66" : d.isLogitNode ? "#e94560" : "#ccc")
-    .text(d => d.isTokenNode ? d.label : d.isLogitNode ? d.label : d.id);
+    .attr("font-weight", d => d.isLogitNode ? "bold" : "normal")
+    .attr("font-size", d => d.isLogitNode ? "12px" : "9px")
+    .attr("fill", d => d.isLogitNode ? "#e94560" : "#ccc")
+    .text(d => d.isLogitNode ? d.label : d.id);
 
   const nodeMerge = nodeEnter.merge(nodeSelection);
 
@@ -1163,14 +1051,7 @@ function rebuildGraph() {
     .on("mouseover", function(event, d) {
       if (pinnedTooltip) return;  // don't override pinned tooltip
       tooltip.style.display = "block";
-      if (d.isTokenNode) {
-        hoveredNodeKey = null;
-        tooltip.innerHTML =
-          `<span class="tl">Input Token</span> <span class="tv">"${d.label}"</span><br>` +
-          `<span class="tl">Position:</span> <span class="tv">${d.tIdx}</span><br>` +
-          `<span class="tl">Token ID:</span> <span class="tv">${d.id}</span><br>` +
-          `<span class="tl">Total |gradient|:</span> <span class="tv">${d.gradScore.toFixed(4)}</span>`;
-      } else if (d.isLogitNode) {
+      if (d.isLogitNode) {
         hoveredNodeKey = null;
         tooltip.innerHTML =
           `<span class="tl">Logit Node</span> <span class="tv">${d.label}</span><br>` +
@@ -1204,14 +1085,7 @@ function rebuildGraph() {
       } else {
         pinnedTooltip = d.key;
         // Show tooltip content for clicked node
-        if (d.isTokenNode) {
-          hoveredNodeKey = null;
-          tooltip.innerHTML =
-            `<span class="tl">Input Token</span> <span class="tv">"${d.label}"</span><br>` +
-            `<span class="tl">Position:</span> <span class="tv">${d.tIdx}</span><br>` +
-            `<span class="tl">Token ID:</span> <span class="tv">${d.id}</span><br>` +
-            `<span class="tl">Total |gradient|:</span> <span class="tv">${d.gradScore.toFixed(4)}</span>`;
-        } else if (d.isLogitNode) {
+        if (d.isLogitNode) {
           hoveredNodeKey = null;
           tooltip.innerHTML =
             `<span class="tl">Logit Node</span> <span class="tv">${d.label}</span><br>` +
@@ -1274,7 +1148,7 @@ function dragged(event, d) {
 function dragended(event, d) {
   if (!event.active) simulation.alphaTarget(0);
   d.fx = d.targetX;  // snap x back to layer column
-  d.fy = null;
+  d.fy = d.targetY != null ? d.targetY : null;  // snap token/logit nodes back to fixed y
 }
 
 // --- Selection highlighting ---
@@ -1370,13 +1244,7 @@ function init3D() {
       pinnedTooltip = selectedNode ? d.key : null;
       if (selectedNode) {
         tooltip.style.display = "block";
-        if (d.isTokenNode) {
-          tooltip.innerHTML =
-            '<span class="tl">Input Token</span> <span class="tv">"' + d.label + '"</span><br>' +
-            '<span class="tl">Position:</span> <span class="tv">' + d.tIdx + '</span><br>' +
-            '<span class="tl">Token ID:</span> <span class="tv">' + d.id + '</span><br>' +
-            '<span class="tl">Total |gradient|:</span> <span class="tv">' + d.gradScore.toFixed(4) + '</span>';
-        } else if (d.isLogitNode) {
+        if (d.isLogitNode) {
           tooltip.innerHTML =
             '<span class="tl">Logit Node</span> <span class="tv">' + d.label + '</span><br>' +
             '<span class="tl">Token ID:</span> <span class="tv">' + d.id + '</span><br>' +
@@ -1476,37 +1344,9 @@ function rebuild3DGraph() {
       }
     });
   }
-  const hasToken3d = DATA._tokenNodes && DATA._tokenNodes.length > 0;
-  if (hasToken3d) {
-    const tokThreshPct = +tokenThresholdSlider.value;
-    const tokThreshold3d = tokThreshPct === 0 ? 0 : DATA._tokenMaxAbs * Math.pow(tokThreshPct / 100, 3);
-    DATA._tokenEdges.forEach(e => {
-      if (!selectedKeys.has(e.dKey)) return;
-      if (Math.abs(e.value) >= tokThreshold3d) {
-        edges3d.push({ source: e.uKey, target: e.dKey, value: e.value, isTokenEdge: true });
-      }
-    });
-  }
-
   // Create node data — initial random Y/Z, fixed X per layer
   const layerSpacing = 60;
-  const tokenOffset3d = hasToken3d ? 1 : 0;
   const nodeData = [];
-
-  // Token nodes at leftmost position
-  if (hasToken3d) {
-    DATA._tokenNodes.forEach((tn, idx) => {
-      selectedKeys.add(tn.key);
-      nodeData.push({
-        key: tn.key, layer: "token", id: tn.id, label: tn.label, tIdx: tn.tIdx,
-        gradScore: tn.gradScore, freq: 0, logitScore: 0,
-        isTokenNode: true,
-        px: (-1 - (activeLayers.length - 1) / 2) * layerSpacing,
-        py: (idx - (DATA._tokenNodes.length - 1) / 2) * 20,
-        pz: 0,
-      });
-    });
-  }
 
   selected.forEach(f => {
     nodeData.push({
@@ -1540,7 +1380,7 @@ function rebuild3DGraph() {
   for (let iter = 0; iter < 200; iter++) {
     for (let i = 0; i < nodeData.length; i++) {
       const a = nodeData[i];
-      if (a.isLogitNode || a.isTokenNode) continue;
+      if (a.isLogitNode) continue;
       let fy = 0, fz = 0;
       for (let j = 0; j < nodeData.length; j++) {
         if (i === j) continue;
@@ -1568,17 +1408,10 @@ function rebuild3DGraph() {
 
   // Create Three.js node meshes at their positions
   nodeData.forEach(n => {
-    let geometry;
-    if (n.isTokenNode) {
-      geometry = new THREE.BoxGeometry(8, 8, 8);
-    } else {
-      const r = n.isLogitNode ? 6 : 2 + 4 * (nodeScore(n) / (ms || 1));
-      geometry = new THREE.SphereGeometry(r, 16, 16);
-    }
+    const r = n.isLogitNode ? 6 : 2 + 4 * (nodeScore(n) / (ms || 1));
+    const geometry = new THREE.SphereGeometry(r, 16, 16);
     let color;
-    if (n.isTokenNode) {
-      color = new THREE.Color(0x51cf66);
-    } else if (n.isLogitNode) {
+    if (n.isLogitNode) {
       color = new THREE.Color(0xe94560);
     } else {
       const t = activeLayers.length > 1
@@ -1737,8 +1570,21 @@ async function exportGraphJSON() {
         const resp = await fetch(url);
         if (resp.ok) {
           const data = await resp.json();
-          descCache[key] = (data && data.explanations && data.explanations.length > 0)
-            ? (data.explanations[0].description || null) : null;
+          const expl = (data && data.explanations) || [];
+          descCache[key] = {
+            desc: expl.length > 0 ? (expl[0].description || null) : null,
+            pos_str: (data.pos_str || []).slice(0, 10),
+            pos_values: (data.pos_values || []).slice(0, 10),
+            neg_str: (data.neg_str || []).slice(0, 10),
+            neg_values: (data.neg_values || []).slice(0, 10),
+            frac_nonzero: data.frac_nonzero,
+            examples: (data.activations || []).slice(0, 3).map(act => ({
+              tokens: act.tokens || [],
+              values: act.values || [],
+              maxValueTokenIndex: act.maxValueTokenIndex || 0,
+              maxValue: act.maxValue || 1,
+            })),
+          };
         } else {
           descCache[key] = null;
         }
@@ -1759,7 +1605,12 @@ async function exportGraphJSON() {
     if (!nodesByLayer[lk]) nodesByLayer[lk] = [];
     const key = n.layer + ":" + n.id;
     const entry = { id: n.id };
-    if (descCache[key]) entry.desc = descCache[key];
+    if (descCache[key]) {
+      if (descCache[key].desc) entry.desc = descCache[key].desc;
+      if (descCache[key].pos_str && descCache[key].pos_str.length) entry.promotes = descCache[key].pos_str.slice(0, 5);
+      if (descCache[key].neg_str && descCache[key].neg_str.length) entry.suppresses = descCache[key].neg_str.slice(0, 5);
+      if (descCache[key].frac_nonzero != null) entry.sparsity = descCache[key].frac_nonzero;
+    }
     entry.score = +nodeScore(n).toFixed(4);
     nodesByLayer[lk].push(entry);
   });
@@ -1774,19 +1625,9 @@ async function exportGraphJSON() {
     }));
   }
 
-  const tokenNodesVisible = currentNodes.filter(n => n.isTokenNode);
-  if (tokenNodesVisible.length > 0) {
-    nodesByLayer["Input"] = tokenNodesVisible.map(n => ({
-      token: n.label,
-      token_id: n.id,
-      position: n.tIdx,
-      total_grad: +n.gradScore.toFixed(4),
-    }));
-  }
-
   // Build edges sorted by |gradient| descending
   const edges = currentEdges.map(e => ({
-    src: e.isTokenEdge ? ("Input:" + e.uLabel) : ("L" + e.uLayer + ":" + e.uId),
+    src: "L" + e.uLayer + ":" + e.uId,
     dst: e.isLogitEdge ? ("Logit:" + e.dLabel) : ("L" + e.dLayer + ":" + e.dId),
     grad: +e.value.toFixed(4),
   }));
@@ -1803,7 +1644,7 @@ async function exportGraphJSON() {
 
   const context = "This is a feature circuit extracted from the transformer language model " + (DATA.metadata.model || "unknown") + ". "
     + "Each node represents a feature learned by a Sparse Autoencoder (SAE) trained on the model's residual stream at a specific layer. "
-    + "SAE features are interpretable directions in activation space; their 'desc' field (when available) is an auto-generated natural language description of what inputs cause that feature to activate. "
+    + "SAE features are interpretable directions in activation space; their 'desc' field (when available) is an auto-generated natural language description of what inputs cause that feature to activate. The 'promotes' and 'suppresses' fields list the top tokens whose logit probabilities are increased or decreased by this feature's decoder direction. "
     + "Each edge represents the gradient of a downstream SAE feature's activation with respect to an upstream SAE feature's activation, computed across the prompts listed in metadata. "
     + "A positive gradient (excitatory) means increasing the upstream feature's activation tends to increase the downstream feature's activation; a negative gradient (inhibitory) means the opposite. "
     + "Larger absolute gradient values indicate stronger functional connections. "
@@ -1812,7 +1653,6 @@ async function exportGraphJSON() {
     + "The prompts used to compute this circuit are listed in metadata.prompts. "
     + "Features that are consistently active across these prompts and strongly connected to each other likely form a functional circuit relevant to the shared task structure of those prompts. "
     + "Logit nodes (if present) represent specific output tokens; edges to logit nodes show how strongly each feature influences the probability of that token being predicted. "
-    + "Input token nodes (if present) represent the input tokens; edges from input tokens to features show how much each token position contributes to each feature's activation via embedding perturbation gradients."
     + npLayerNote
     + "\n\nFiltering criteria applied to this export: "
     + "Features shown are the top " + topnSlider.value + " per layer "
