@@ -26,7 +26,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from feature_circuit_discovery.data import set_model
 set_model("gemma-2-2b")
 
-from experiments.feature_grad_exp_optimized import (
+from feature_circuit_discovery.core import (
     compute_gradient_matrices_batch,
     get_contrastive_features,
     load_sae,
@@ -139,9 +139,11 @@ if __name__ == "__main__":
 
     # Batch all prompts for gradient computation (label-aligned averaging)
     all_prompts = prompts_yes + prompts_no
-    inputs = tokenizer(
+    tokenized = tokenizer(
         all_prompts, return_tensors="pt", add_special_tokens=True, padding=True
-    ).input_ids.to(device)
+    )
+    inputs = tokenized["input_ids"].to(device)
+    attention_mask = tokenized["attention_mask"].to(device)
 
     # Label-aligned signs: +1 for Yes, -1 for No
     # Prevents cancellation of decision-relevant edges across groups
@@ -197,6 +199,7 @@ if __name__ == "__main__":
         batch_results, logit_grad_matrix = compute_gradient_matrices_batch(
             inputs, up_layer, downstream_pairs, up_feats, model, verbose=True,
             logit_token_ids=logit_token_ids, prompt_signs=prompt_signs,
+            attention_mask=attention_mask,
         )
         elapsed = time.time() - t0
 
@@ -214,7 +217,7 @@ if __name__ == "__main__":
           f"for {n_pairs} pairs ---")
 
     # Free model memory before export
-    del model, tokenizer, inputs
+    del model, tokenizer, inputs, attention_mask
     _sae_cache.clear()
     gc.collect()
     if device.type == "mps":

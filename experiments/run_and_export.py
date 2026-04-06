@@ -12,7 +12,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from tqdm import tqdm
 
-from experiments.feature_grad_exp_optimized import (
+from feature_circuit_discovery.core import (
     compute_gradient_matrices_batch,
     get_contrastive_features,
     load_sae,

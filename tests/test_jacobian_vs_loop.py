@@ -16,7 +16,7 @@ from feature_circuit_discovery.data import set_model
 
 set_model("gemma-2-2b")
 
-from experiments.feature_grad_exp_optimized import (
+from feature_circuit_discovery.core import (
     compute_gradient_matrix,
     compute_gradient_matrix_jacobian,
     compute_gradient_matrices_batch,

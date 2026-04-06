@@ -27,7 +27,7 @@ from feature_circuit_discovery.data import set_model
 
 set_model("gemma-2-2b")
 
-from experiments.feature_grad_exp_optimized import (
+from feature_circuit_discovery.core import (
     JumpReLUSAE,
     compute_gradient_matrices_batch,
     get_contrastive_features,
