@@ -312,6 +312,8 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
     <label>Ranking Mode</label>
     <select id="rank-mode">
       <option value="gradient">Total |Gradient| Influence</option>
+      <option value="outgoing">Outgoing |Gradient| (causal sources)</option>
+      <option value="causal">Outgoing − Incoming (causal rank)</option>
       <option value="logit">Logit |Gradient| (Yes+No)</option>
       <option value="frequency">Activation Frequency</option>
     </select>
@@ -395,6 +397,8 @@ let DATA = __CIRCUIT_DATA_PLACEHOLDER__;
 
 // --- Mutable state recomputed on data load ---
 let featureGradScore = {};
+let featureOutgoing = {};
+let featureIncoming = {};
 let featureFreq = {};
 let allFeatures = [];
 let globalMaxAbs = 0;
@@ -402,6 +406,8 @@ let globalMaxAbs = 0;
 function initData(data) {
   DATA = data;
   featureGradScore = {};
+  featureOutgoing = {};
+  featureIncoming = {};
   featureFreq = {};
   allFeatures = [];
 
@@ -414,6 +420,8 @@ function initData(data) {
     layer.active_feature_ids.forEach(fid => {
       const key = li + ":" + fid;
       featureGradScore[key] = 0;
+      featureOutgoing[key] = 0;
+      featureIncoming[key] = 0;
       if (layer.activation_frequencies && layer.activation_frequencies[fid] !== undefined) {
         featureFreq[key] = layer.activation_frequencies[fid];
       } else {
@@ -429,12 +437,14 @@ function initData(data) {
       let sum = 0;
       for (let i = 0; i < mat.length; i++) sum += Math.abs(mat[i][j]);
       featureGradScore[key] = (featureGradScore[key] || 0) + sum;
+      featureOutgoing[key] = (featureOutgoing[key] || 0) + sum;
     });
     pair.downstream_feature_ids.forEach((did, i) => {
       const key = pair.downstream_layer + ":" + did;
       let sum = 0;
       for (let j = 0; j < mat[i].length; j++) sum += Math.abs(mat[i][j]);
       featureGradScore[key] = (featureGradScore[key] || 0) + sum;
+      featureIncoming[key] = (featureIncoming[key] || 0) + sum;
     });
   });
 
@@ -446,6 +456,9 @@ function initData(data) {
         id: fid,
         key: key,
         gradScore: featureGradScore[key] || 0,
+        outgoingScore: featureOutgoing[key] || 0,
+        incomingScore: featureIncoming[key] || 0,
+        causalScore: Math.max(0, (featureOutgoing[key] || 0) - (featureIncoming[key] || 0)),
         freq: featureFreq[key] || 0,
       });
     });
@@ -585,10 +598,11 @@ function renderActivationSnippet(ex) {
 
 function buildNodeTooltipHTML(d, featureData) {
   const score = nodeScore(d);
-  const scoreLabel = currentMode === "logit" ? "Logit |grad|" : currentMode === "gradient" ? "Total |grad|" : "Activation freq";
+  const scoreLabel = {"logit": "Logit |grad|", "gradient": "Total |grad|", "outgoing": "Outgoing |grad|", "causal": "Outgoing\u2212Incoming", "frequency": "Activation freq"}[currentMode] || "Score";
   let html =
     `<span class="tl">Layer ${d.layer} Feature</span> <span class="tv">#${d.id}</span><br>` +
-    `<span class="tl">${scoreLabel}:</span> <span class="tv">${score.toFixed(4)}</span>`;
+    `<span class="tl">${scoreLabel}:</span> <span class="tv">${score.toFixed(4)}</span>` +
+    `<br><span class="tl">Outgoing:</span> ${(d.outgoingScore||0).toFixed(2)} <span class="tl">Incoming:</span> ${(d.incomingScore||0).toFixed(2)}`;
   if (npHasLayer(d.layer)) {
     if (featureData === undefined) {
       html += `<br><span class="tl" style="font-style:italic;">Loading...</span>`;
@@ -741,6 +755,8 @@ opacitySlider.addEventListener("input", function() {
 function nodeScore(d) {
   if (currentMode === "logit") return d.logitScore || 0;
   if (currentMode === "frequency") return d.freq;
+  if (currentMode === "outgoing") return d.outgoingScore || 0;
+  if (currentMode === "causal") return d.causalScore || 0;
   return d.gradScore;
 }
 
@@ -939,8 +955,9 @@ function rebuildGraph() {
       if (d.isLogitNode) return 16;
       return 6 + 8 * (nodeScore(d) / (maxScore || 1));
     }))
-    .force("y", d3.forceY(h / 2).strength(0.03))
-    .alphaDecay(0.01)
+    .force("y", d3.forceY(h / 2).strength(0.05))
+    .alphaDecay(0.05)
+    .velocityDecay(0.4)
     .on("tick", ticked);
 
   // --- Draw layer guide lines ---
